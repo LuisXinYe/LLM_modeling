@@ -1,0 +1,14 @@
+name: "Ascend 910C"
+peak_tflops_bf16: 800
+hbm_capacity_gb: 128
+hbm_bandwidth_tb_s: 3.2
+hbm_usable_ratio: 0.85
+intra_node_bw_gb_s: 400
+inter_node_bw_gb_s: 100
+inter_node_latency_us: 5
+devices_per_node: 8
+calibration:
+  compute_eff_large_gemm: 0.50
+  compute_eff_small_op: 0.20
+  memory_efficiency: 0.70
+  comm_efficiency: 0.70
