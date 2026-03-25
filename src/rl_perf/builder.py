@@ -68,6 +68,58 @@ def _build_tp_allreduce(
     )
 
 
+def _build_tp_allgather(
+    name: str,
+    batch: int,
+    seq_len: int,
+    hidden_size: int,
+    dtype_bytes: int,
+    tp: int,
+    hw: HardwareConfig,
+    dep_idx: int,
+) -> SimOp:
+    """Build a TP AllGather SimOp for SP (sequence parallelism)."""
+    msg = batch * seq_len * hidden_size * dtype_bytes
+    cost = ops.op_allgather(msg, group_size=tp)
+    duration = ops.comm_time(
+        cost, hw, group_size=tp, is_intra_node=_is_intra_node(tp, hw), algorithm="ring_half"
+    )
+    return SimOp(
+        name=name,
+        stream="tp_comm",
+        duration=duration,
+        depends_on=[dep_idx],
+        weight_bytes=0,
+        output_bytes=0,
+    )
+
+
+def _build_tp_reducescatter(
+    name: str,
+    batch: int,
+    seq_len: int,
+    hidden_size: int,
+    dtype_bytes: int,
+    tp: int,
+    hw: HardwareConfig,
+    dep_idx: int,
+) -> SimOp:
+    """Build a TP ReduceScatter SimOp for SP (sequence parallelism)."""
+    msg = batch * seq_len * hidden_size * dtype_bytes
+    cost = ops.op_reducescatter(msg, group_size=tp)
+    duration = ops.comm_time(
+        cost, hw, group_size=tp, is_intra_node=_is_intra_node(tp, hw), algorithm="ring_half"
+    )
+    return SimOp(
+        name=name,
+        stream="tp_comm",
+        duration=duration,
+        depends_on=[dep_idx],
+        weight_bytes=0,
+        output_bytes=0,
+    )
+
+
 # ---------------------------------------------------------------------------
 # build_layer_ops
 # ---------------------------------------------------------------------------
@@ -166,33 +218,60 @@ def build_layer_ops(
     else:
         raise ValueError(f"Unknown attention type: {attn_type}")
 
-    attn_op = SimOp(
-        name=f"attention_{attn_type.lower()}",
-        stream="compute",
-        duration=ops.roofline_time(attn_cost, hw, is_large_gemm=True),
-        depends_on=[_idx(0)],  # depends on norm1
-        weight_bytes=attn_cost.weight_bytes,
-        output_bytes=attn_cost.output_bytes,
-    )
-    result.append(attn_op)  # local idx 1
-
-    # ---- 2. TP AllReduce (attention) ----------------------------------------
-    if tp > 1:
-        tp_attn_comm = _build_tp_allreduce(
-            name="tp_allreduce_attn",
+    # SP: insert AllGather before attention if sp=True and tp>1
+    if parallel_cfg.sp and tp > 1:
+        ag_attn = _build_tp_allgather(
+            name="tp_allgather_attn",
             batch=batch,
             seq_len=seq_len,
             hidden_size=d,
             dtype_bytes=dtype_bytes,
             tp=tp,
             hw=hw,
-            dep_idx=_idx(1),
-            start_idx=_idx(2),
+            dep_idx=_idx(len(result) - 1),  # depends on norm1
         )
-        result.append(tp_attn_comm)  # local idx 2
-        last_compute_idx = _idx(2)
+        result.append(ag_attn)
+
+    attn_dep_idx = _idx(len(result) - 1)  # depends on allgather (SP) or norm1 (no SP)
+    attn_op = SimOp(
+        name=f"attention_{attn_type.lower()}",
+        stream="compute",
+        duration=ops.roofline_time(attn_cost, hw, is_large_gemm=True),
+        depends_on=[attn_dep_idx],
+        weight_bytes=attn_cost.weight_bytes,
+        output_bytes=attn_cost.output_bytes,
+    )
+    result.append(attn_op)
+
+    # ---- 2. TP comm (attention) ---------------------------------------------
+    if tp > 1:
+        if parallel_cfg.sp:
+            tp_attn_comm = _build_tp_reducescatter(
+                name="tp_reducescatter_attn",
+                batch=batch,
+                seq_len=seq_len,
+                hidden_size=d,
+                dtype_bytes=dtype_bytes,
+                tp=tp,
+                hw=hw,
+                dep_idx=_idx(len(result) - 1),  # depends on attention
+            )
+        else:
+            tp_attn_comm = _build_tp_allreduce(
+                name="tp_allreduce_attn",
+                batch=batch,
+                seq_len=seq_len,
+                hidden_size=d,
+                dtype_bytes=dtype_bytes,
+                tp=tp,
+                hw=hw,
+                dep_idx=_idx(len(result) - 1),  # depends on attention
+                start_idx=_idx(len(result)),
+            )
+        result.append(tp_attn_comm)
+        last_compute_idx = _idx(len(result) - 1)
     else:
-        last_compute_idx = _idx(1)
+        last_compute_idx = _idx(len(result) - 1)
 
     # ---- 3. Pre-FFN RMSNorm -------------------------------------------------
     norm2_cost = ops.op_rmsnorm(d, batch_tokens, phase, dtype_bytes)
@@ -208,6 +287,21 @@ def build_layer_ops(
     last_compute_local = len(result) - 1
 
     # ---- 4. FFN -------------------------------------------------------------
+    # SP: insert AllGather before FFN if sp=True and tp>1
+    if parallel_cfg.sp and tp > 1:
+        ag_ffn = _build_tp_allgather(
+            name="tp_allgather_ffn",
+            batch=batch,
+            seq_len=seq_len,
+            hidden_size=d,
+            dtype_bytes=dtype_bytes,
+            tp=tp,
+            hw=hw,
+            dep_idx=_idx(len(result) - 1),  # depends on norm2
+        )
+        result.append(ag_ffn)
+        last_compute_local = len(result) - 1
+
     ffn_type = layer_cfg.ffn
 
     if ffn_type == "SwiGLU":
@@ -278,19 +372,31 @@ def build_layer_ops(
     else:
         raise ValueError(f"Unknown FFN type: {ffn_type}")
 
-    # ---- 5. TP AllReduce (FFN) -----------------------------------------------
+    # ---- 5. TP comm (FFN) ----------------------------------------------------
     if tp > 1:
-        tp_ffn_comm = _build_tp_allreduce(
-            name="tp_allreduce_ffn",
-            batch=batch,
-            seq_len=seq_len,
-            hidden_size=d,
-            dtype_bytes=dtype_bytes,
-            tp=tp,
-            hw=hw,
-            dep_idx=_idx(last_compute_local),
-            start_idx=_idx(last_compute_local + 1),
-        )
+        if parallel_cfg.sp:
+            tp_ffn_comm = _build_tp_reducescatter(
+                name="tp_reducescatter_ffn",
+                batch=batch,
+                seq_len=seq_len,
+                hidden_size=d,
+                dtype_bytes=dtype_bytes,
+                tp=tp,
+                hw=hw,
+                dep_idx=_idx(last_compute_local),
+            )
+        else:
+            tp_ffn_comm = _build_tp_allreduce(
+                name="tp_allreduce_ffn",
+                batch=batch,
+                seq_len=seq_len,
+                hidden_size=d,
+                dtype_bytes=dtype_bytes,
+                tp=tp,
+                hw=hw,
+                dep_idx=_idx(last_compute_local),
+                start_idx=_idx(last_compute_local + 1),
+            )
         result.append(tp_ffn_comm)
         last_compute_local = len(result) - 1
 

@@ -247,3 +247,63 @@ def test_moe_layer_has_ep_comm(model_cfg, hw, rl_cfg):
     )
     streams = {op.stream for op in result}
     assert "ep_comm" in streams, f"Expected ep_comm stream, got: {streams}"
+
+
+# ---------------------------------------------------------------------------
+# Test 11: SP replaces allreduce with allgather + reducescatter
+# ---------------------------------------------------------------------------
+
+
+def test_sp_replaces_allreduce_with_ag_rs(single_layer, model_cfg, hw):
+    """sp=True + tp>1 should produce allgather + reducescatter instead of allreduce."""
+    parallel_sp = ParallelismConfig(tp=4, pp=1, dp=1, ep=1, sp=True)
+    result = build_layer_ops(
+        layer_cfg=single_layer, model_cfg=model_cfg, parallel_cfg=parallel_sp,
+        hw=hw, batch=2, seq_len=512, phase=Phase.TRAIN_FWD,
+    )
+    names = [op.name for op in result]
+    assert not any("allreduce" in n for n in names), f"SP should replace allreduce: {names}"
+    assert any("allgather" in n for n in names), f"SP should add allgather: {names}"
+    assert any("reducescatter" in n for n in names), f"SP should add reducescatter: {names}"
+
+
+# ---------------------------------------------------------------------------
+# Test 12: SP=False keeps allreduce
+# ---------------------------------------------------------------------------
+
+
+def test_sp_false_keeps_allreduce(single_layer, model_cfg, hw):
+    """sp=False + tp>1 should still use allreduce."""
+    parallel_no_sp = ParallelismConfig(tp=4, pp=1, dp=1, ep=1, sp=False)
+    result = build_layer_ops(
+        layer_cfg=single_layer, model_cfg=model_cfg, parallel_cfg=parallel_no_sp,
+        hw=hw, batch=2, seq_len=512, phase=Phase.TRAIN_FWD,
+    )
+    names = [op.name for op in result]
+    assert any("allreduce" in n for n in names)
+    assert not any("allgather" in n for n in names)
+
+
+# ---------------------------------------------------------------------------
+# Test 13: SP comm volume matches allreduce
+# ---------------------------------------------------------------------------
+
+
+def test_sp_comm_volume_matches_allreduce(single_layer, model_cfg, hw):
+    """SP (AG+RS) total comm duration should equal AllReduce duration."""
+    tp = 4
+    parallel_no_sp = ParallelismConfig(tp=tp, pp=1, dp=1, ep=1, sp=False)
+    parallel_sp = ParallelismConfig(tp=tp, pp=1, dp=1, ep=1, sp=True)
+
+    ops_no_sp = build_layer_ops(
+        layer_cfg=single_layer, model_cfg=model_cfg, parallel_cfg=parallel_no_sp,
+        hw=hw, batch=2, seq_len=512, phase=Phase.TRAIN_FWD,
+    )
+    ops_sp = build_layer_ops(
+        layer_cfg=single_layer, model_cfg=model_cfg, parallel_cfg=parallel_sp,
+        hw=hw, batch=2, seq_len=512, phase=Phase.TRAIN_FWD,
+    )
+
+    t_allreduce = sum(op.duration for op in ops_no_sp if "comm" in op.stream)
+    t_sp = sum(op.duration for op in ops_sp if "comm" in op.stream)
+    assert t_sp == pytest.approx(t_allreduce, rel=0.01)
