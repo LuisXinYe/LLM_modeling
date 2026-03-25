@@ -505,3 +505,24 @@ def test_op_ring_cp_comm_time(hw: HardwareConfig):
     cost = op_ring_cp(4096, 4, 1024, dtype_bytes=2)
     t = comm_time(cost, hw, group_size=4, is_intra_node=False, algorithm="ring_half")
     assert t > 0
+
+
+# ---------------------------------------------------------------------------
+# GQA FLOPs formula verification
+# ---------------------------------------------------------------------------
+
+
+def test_gqa_attention_flops_formula():
+    """Verify GQA FLOPs match spec: proj=(4+4G/H)d^2, attn=4*d_qo*s per token."""
+    H, G, d_h = 32, 8, 128
+    d = H * d_h  # 4096
+    batch, seq = 1, 512
+    cost = op_gqa_attention(H, G, d_h, d, batch, seq, Phase.PREFILL)
+
+    d_qo = H * d_h
+    d_kv = G * d_h
+    batch_tokens = batch * seq
+    expected_proj = (2 * d * d_qo + 2 * d * d_kv + 2 * d * d_kv + 2 * d_qo * d) * batch_tokens
+    expected_attn = 4 * d_qo * seq * batch_tokens  # uses d_qo, not d
+    expected = expected_proj + expected_attn
+    assert cost.flops == pytest.approx(expected)

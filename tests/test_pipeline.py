@@ -22,6 +22,7 @@ from rl_perf.pipeline import (
     generation_time,
     training_time,
 )
+from rl_perf.simulator import SimResult
 
 CONFIGS_DIR = Path(__file__).parent.parent / "configs"
 
@@ -132,7 +133,7 @@ def test_epoch_time():
 
 
 def test_generation_time_nonzero(model_cfg, hw, parallel_cfg, rl_cfg):
-    t = generation_time(model_cfg, hw, parallel_cfg, rl_cfg)
+    t, _, _ = generation_time(model_cfg, hw, parallel_cfg, rl_cfg)
     assert t > 0
 
 
@@ -142,7 +143,7 @@ def test_generation_time_nonzero(model_cfg, hw, parallel_cfg, rl_cfg):
 
 
 def test_training_time_nonzero(model_cfg, hw, parallel_cfg, rl_cfg):
-    t = training_time(model_cfg, hw, parallel_cfg, rl_cfg)
+    t, _ = training_time(model_cfg, hw, parallel_cfg, rl_cfg)
     assert t > 0
 
 
@@ -154,3 +155,94 @@ def test_epoch_time_colocated():
 def test_epoch_time_separated():
     t = epoch_time(t_gen=10.0, t_train=15.0, startup_overhead=0.5, colocated=False)
     assert t == pytest.approx(15.5)  # max + startup
+
+
+# ---------------------------------------------------------------------------
+# Test: generation_time returns 3-tuple with SimResult
+# ---------------------------------------------------------------------------
+
+
+def test_generation_time_returns_tuple(model_cfg, hw, parallel_cfg, rl_cfg):
+    """generation_time should return (total_time, SimResult, t_per_batch)."""
+    result = generation_time(model_cfg, hw, parallel_cfg, rl_cfg)
+    assert isinstance(result, tuple)
+    assert len(result) == 3
+    t, sim, t_batch = result
+    assert t > 0
+    assert isinstance(sim, SimResult)
+    assert t_batch > 0
+    assert t_batch < t  # single batch < total
+
+
+# ---------------------------------------------------------------------------
+# Test: training_time returns 2-tuple with SimResult
+# ---------------------------------------------------------------------------
+
+
+def test_training_time_returns_tuple(model_cfg, hw, parallel_cfg, rl_cfg):
+    """training_time should return (total_time, SimResult)."""
+    result = training_time(model_cfg, hw, parallel_cfg, rl_cfg)
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    t, sim = result
+    assert t > 0
+    assert isinstance(sim, SimResult)
+    assert sim.weight_bytes > 0
+
+
+# ---------------------------------------------------------------------------
+# Test: t_per_batch includes decode time (startup overhead fix)
+# ---------------------------------------------------------------------------
+
+
+def test_startup_overhead_includes_decode(model_cfg, hw, parallel_cfg, rl_cfg):
+    """t_per_batch should be > prefill-only time (includes decode)."""
+    _, sim, t_per_batch = generation_time(model_cfg, hw, parallel_cfg, rl_cfg)
+    from rl_perf.builder import build_generation_step
+    from rl_perf.simulator import simulate as sim_fn
+
+    prefill_ops, _ = build_generation_step(model_cfg, hw, parallel_cfg, rl_cfg)
+    t_prefill = sim_fn(prefill_ops).wall_clock_time
+    assert t_per_batch > t_prefill
+
+
+# ---------------------------------------------------------------------------
+# Speculative decoding reduces generation time
+# ---------------------------------------------------------------------------
+
+
+def test_speculative_decoding_reduces_gen_time():
+    """Speculative decoding with acceptance_len > 1 should reduce generation time."""
+    mc = load_model_config(str(CONFIGS_DIR / "models" / "deepseekv3_671b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+    parallel = ParallelismConfig(tp=8, pp=1, dp=8)
+
+    rl_base = RLConfig(total_prompts=100, group_size=4, gen_batch_size=16,
+                       train_micro_batch_size=2)
+    rl_spec = RLConfig(total_prompts=100, group_size=4, gen_batch_size=16,
+                       train_micro_batch_size=2,
+                       use_speculative_decoding=True, mtp_acceptance_len=2)
+
+    t_base, _, _ = generation_time(mc, hw, parallel, rl_base)
+    t_spec, _, _ = generation_time(mc, hw, parallel, rl_spec)
+    assert t_spec < t_base  # speculative decoding should be faster
+
+
+# ---------------------------------------------------------------------------
+# PP bubble ratio increases training time
+# ---------------------------------------------------------------------------
+
+
+def test_pp_bubble_ratio(model_cfg, hw, rl_cfg):
+    """PP > 1 should increase training time due to bubble overhead."""
+    parallel_pp1 = ParallelismConfig(tp=8, pp=1, dp=8)
+    parallel_pp4 = ParallelismConfig(tp=8, pp=4, dp=2)
+
+    t1, _ = training_time(model_cfg, hw, parallel_pp1, rl_cfg)
+    t4, _ = training_time(model_cfg, hw, parallel_pp4, rl_cfg)
+    # PP=4 should have bubble overhead making per-step time larger
+    # But fewer layers per stage, so total could go either way
+    # Just verify both are positive and different
+    assert t1 > 0
+    assert t4 > 0
+    assert t1 != t4

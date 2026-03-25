@@ -399,3 +399,31 @@ def test_no_mtp_without_auxiliary(model_cfg, hw, parallel_cfg_tp1, rl_cfg):
     all_ops = build_training_step(model_cfg, hw, parallel_cfg_tp1, rl_cfg)
     names = [op.name for op in all_ops]
     assert not any("mtp" in n for n in names)
+
+
+# ---------------------------------------------------------------------------
+# Test 19: Hybrid architecture with per-layer configs
+# ---------------------------------------------------------------------------
+
+
+def test_hybrid_layers_different_types(hw, rl_cfg):
+    """Model with per-layer configs should build ops for each layer type."""
+    mc = ModelConfig(
+        name="hybrid", hidden_size=4096, vocab_size=32000, num_layers=4, dtype="bf16",
+        layers=[
+            LayerConfig(attention="GQA", num_heads=32, num_kv_heads=8, head_dim=128,
+                       ffn="SwiGLU", intermediate_size=11008),
+            LayerConfig(attention="SWA", num_heads=32, num_kv_heads=8, head_dim=128,
+                       ffn="SwiGLU", intermediate_size=11008, window_size=4096),
+            LayerConfig(attention="GQA", num_heads=32, num_kv_heads=8, head_dim=128,
+                       ffn="SwiGLU", intermediate_size=11008),
+            LayerConfig(attention="SWA", num_heads=32, num_kv_heads=8, head_dim=128,
+                       ffn="SwiGLU", intermediate_size=11008, window_size=4096),
+        ],
+    )
+    parallel = ParallelismConfig(tp=1, pp=1, dp=1)
+    all_ops = build_training_step(mc, hw, parallel, rl_cfg)
+    assert len(all_ops) > 0
+    names = [op.name for op in all_ops]
+    assert any("gqa" in n for n in names)
+    assert any("swa" in n for n in names)
