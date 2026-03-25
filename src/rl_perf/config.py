@@ -239,29 +239,18 @@ class ParallelismConfig(BaseModel):
         return self.tp * self.pp * self.dp * self.ep
 
 
-def load_model_config(path: str) -> ModelConfig:
-    """Load a ModelConfig from a YAML file.
-
-    Args:
-        path: Path to the YAML configuration file.
-
-    Returns:
-        Parsed ModelConfig instance.
-    """
+def _load_yaml_config(path: str, config_class):
+    """Load a pydantic config from a YAML file."""
     with open(path) as f:
         data = yaml.safe_load(f)
-    return ModelConfig(**data)
+    return config_class(**data)
+
+
+def load_model_config(path: str) -> ModelConfig:
+    """Load a ModelConfig from a YAML file."""
+    return _load_yaml_config(path, ModelConfig)
 
 
 def load_hardware_config(path: str) -> HardwareConfig:
-    """Load a HardwareConfig from a YAML file.
-
-    Args:
-        path: Path to the YAML configuration file.
-
-    Returns:
-        Parsed HardwareConfig instance.
-    """
-    with open(path) as f:
-        data = yaml.safe_load(f)
-    return HardwareConfig(**data)
+    """Load a HardwareConfig from a YAML file."""
+    return _load_yaml_config(path, HardwareConfig)

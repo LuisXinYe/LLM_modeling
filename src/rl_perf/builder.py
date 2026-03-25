@@ -21,11 +21,12 @@ from rl_perf.config import (
 )
 
 
-def _validate_parallelism(model_cfg: ModelConfig, parallel_cfg: ParallelismConfig):
+def _validate_parallelism(
+    all_layers: List[LayerConfig], parallel_cfg: ParallelismConfig
+):
     """Validate parallelism config against model dimensions."""
     tp = parallel_cfg.tp
     pp = parallel_cfg.pp
-    all_layers = model_cfg.get_layers()
 
     if pp > len(all_layers):
         raise ValueError(
@@ -258,32 +259,15 @@ def build_layer_ops(
 
     # ---- 2. TP comm (attention) ---------------------------------------------
     if tp > 1:
-        if parallel_cfg.sp:
-            tp_attn_comm = _build_tp_comm(
-                name="tp_reducescatter_attn", collective="reducescatter",
-                batch=batch,
-                seq_len=seq_len,
-                hidden_size=d,
-                dtype_bytes=dtype_bytes,
-                tp=tp,
-                hw=hw,
-                dep_idx=_idx(len(result) - 1),  # depends on attention
-            )
-        else:
-            tp_attn_comm = _build_tp_comm(
-                name="tp_allreduce_attn", collective="allreduce",
-                batch=batch,
-                seq_len=seq_len,
-                hidden_size=d,
-                dtype_bytes=dtype_bytes,
-                tp=tp,
-                hw=hw,
-                dep_idx=_idx(len(result) - 1),  # depends on attention
-            )
+        collective = "reducescatter" if parallel_cfg.sp else "allreduce"
+        tp_attn_comm = _build_tp_comm(
+            name=f"tp_{collective}_attn", collective=collective,
+            batch=batch, seq_len=seq_len, hidden_size=d,
+            dtype_bytes=dtype_bytes, tp=tp, hw=hw,
+            dep_idx=_idx(len(result) - 1),
+        )
         result.append(tp_attn_comm)
-        last_compute_idx = _idx(len(result) - 1)
-    else:
-        last_compute_idx = _idx(len(result) - 1)
+    last_compute_idx = _idx(len(result) - 1)
 
     # ---- 3. Pre-FFN RMSNorm -------------------------------------------------
     norm2_cost = ops.op_rmsnorm(d, batch_tokens, phase, dtype_bytes)
@@ -386,28 +370,13 @@ def build_layer_ops(
 
     # ---- 5. TP comm (FFN) ----------------------------------------------------
     if tp > 1:
-        if parallel_cfg.sp:
-            tp_ffn_comm = _build_tp_comm(
-                name="tp_reducescatter_ffn", collective="reducescatter",
-                batch=batch,
-                seq_len=seq_len,
-                hidden_size=d,
-                dtype_bytes=dtype_bytes,
-                tp=tp,
-                hw=hw,
-                dep_idx=_idx(last_compute_local),
-            )
-        else:
-            tp_ffn_comm = _build_tp_comm(
-                name="tp_allreduce_ffn", collective="allreduce",
-                batch=batch,
-                seq_len=seq_len,
-                hidden_size=d,
-                dtype_bytes=dtype_bytes,
-                tp=tp,
-                hw=hw,
-                dep_idx=_idx(last_compute_local),
-            )
+        collective = "reducescatter" if parallel_cfg.sp else "allreduce"
+        tp_ffn_comm = _build_tp_comm(
+            name=f"tp_{collective}_ffn", collective=collective,
+            batch=batch, seq_len=seq_len, hidden_size=d,
+            dtype_bytes=dtype_bytes, tp=tp, hw=hw,
+            dep_idx=_idx(last_compute_local),
+        )
         result.append(tp_ffn_comm)
         last_compute_local = len(result) - 1
 
@@ -443,14 +412,18 @@ def build_layer_ops(
 # ---------------------------------------------------------------------------
 
 
-def _estimate_param_count(model_cfg: ModelConfig, parallel_cfg: ParallelismConfig) -> int:
+def _estimate_param_count(
+    model_cfg: ModelConfig,
+    parallel_cfg: ParallelismConfig,
+    all_layers: List[LayerConfig],
+) -> int:
     """Quick estimate of model parameters per TP shard for gradient sync sizing."""
     tp = parallel_cfg.tp
     d = model_cfg.hidden_size
     dtype_bytes = model_cfg.dtype_bytes
 
     param_bytes = 0
-    for layer_cfg in model_cfg.get_layers():
+    for layer_cfg in all_layers:
         # Attention
         attn_type = layer_cfg.attention
         if attn_type in ("GQA", "MHA", "SWA"):
@@ -512,7 +485,8 @@ def build_training_step(
 
     MVP: PP stage 0 only (builds all layers / pp).
     """
-    _validate_parallelism(model_cfg, parallel_cfg)
+    all_layers = model_cfg.get_layers()
+    _validate_parallelism(all_layers, parallel_cfg)
     pp = parallel_cfg.pp
     dp = parallel_cfg.dp
     dtype_bytes = model_cfg.dtype_bytes
@@ -520,7 +494,6 @@ def build_training_step(
     seq_len = rl_cfg.avg_prompt_len + rl_cfg.avg_response_len
     batch = rl_cfg.train_micro_batch_size
 
-    all_layers = model_cfg.get_layers()
     num_layers_total = len(all_layers)
     # PP stage 0: take the first chunk of layers
     stage_layers_count = num_layers_total // pp
@@ -617,7 +590,7 @@ def build_training_step(
             prev_dep = len(all_ops) - 1
 
     # ------ DP gradient sync ---------------------------------------------------
-    param_count = _estimate_param_count(model_cfg, parallel_cfg)
+    param_count = _estimate_param_count(model_cfg, parallel_cfg, all_layers)
     if dp > 1:
         grad_bytes = param_count * dtype_bytes  # gradient same dtype as weights
 
@@ -673,9 +646,9 @@ def build_generation_step(
 
     Returns (prefill_ops, decode_per_token_ops).
     """
-    _validate_parallelism(model_cfg, parallel_cfg)
-    pp = parallel_cfg.pp
     all_layers = model_cfg.get_layers()
+    _validate_parallelism(all_layers, parallel_cfg)
+    pp = parallel_cfg.pp
     num_layers_total = len(all_layers)
     stage_layers_count = num_layers_total // pp
     stage_layers = all_layers[:stage_layers_count]
