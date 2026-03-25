@@ -1,7 +1,6 @@
-from rl_perf.config import HardwareConfig, ModelConfig, ParallelismConfig, RLConfig
+from rl_perf.config import HardwareConfig, ModelConfig, RLConfig
 from rl_perf.pipeline import bottleneck_analysis, epoch_time, generation_time, training_time
 from rl_perf.report import MemoryProfile, TargetReport
-from rl_perf.simulator import SimResult
 
 
 class RLPerformanceModel:
