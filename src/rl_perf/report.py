@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 
@@ -60,3 +61,8 @@ def format_table(report: TargetReport) -> str:
         "=" * 60,
     ]
     return "\n".join(lines)
+
+
+def format_json(report: TargetReport) -> str:
+    """JSON serialization of TargetReport."""
+    return json.dumps(asdict(report), indent=2, default=str)
