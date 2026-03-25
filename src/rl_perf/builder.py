@@ -500,6 +500,12 @@ def _estimate_param_count(model_cfg: ModelConfig, parallel_cfg: ParallelismConfi
             param_bytes += (
                 ep_num_experts * 3 * d * layer_cfg.expert_intermediate_size * dtype_bytes
             )
+            # Shared experts (not EP-partitioned)
+            if layer_cfg.num_shared_experts > 0:
+                shared_int = layer_cfg.shared_intermediate_size or layer_cfg.intermediate_size
+                param_bytes += (
+                    layer_cfg.num_shared_experts * 3 * d * shared_int * dtype_bytes
+                )
 
         # RMSNorm (small, 2 per layer)
         param_bytes += 2 * d * dtype_bytes
@@ -585,6 +591,27 @@ def build_training_step(
         all_ops.append(mtp_fwd)
         prev_dep = len(all_ops) - 1
 
+    # ------ MTP head (backward) — before layer backward (backprop output→input)
+    if mtp_depth > 0:
+        mtp_bwd_cost = ops.op_mtp_head(
+            hidden_size=model_cfg.hidden_size,
+            vocab_size=model_cfg.vocab_size,
+            mtp_depth=mtp_depth,
+            batch_tokens=batch * seq_len,
+            phase=Phase.TRAIN_BWD,
+            dtype_bytes=dtype_bytes,
+        )
+        mtp_bwd = SimOp(
+            name="mtp_head_bwd",
+            stream="compute",
+            duration=ops.roofline_time(mtp_bwd_cost, hw, is_large_gemm=True),
+            depends_on=[prev_dep] if prev_dep is not None else [],
+            weight_bytes=0,
+            output_bytes=0,
+        )
+        all_ops.append(mtp_bwd)
+        prev_dep = len(all_ops) - 1
+
     # ------ Backward pass (reversed layers) ------------------------------------
     for layer_cfg in reversed(stage_layers):
         offset = len(all_ops)
@@ -603,27 +630,6 @@ def build_training_step(
         all_ops.extend(layer_ops)
         if layer_ops:
             prev_dep = len(all_ops) - 1
-
-    # ------ MTP head (backward) -----------------------------------------------
-    if mtp_depth > 0:
-        mtp_bwd_cost = ops.op_mtp_head(
-            hidden_size=model_cfg.hidden_size,
-            vocab_size=model_cfg.vocab_size,
-            mtp_depth=mtp_depth,
-            batch_tokens=batch * seq_len,
-            phase=Phase.TRAIN_BWD,
-            dtype_bytes=dtype_bytes,
-        )
-        mtp_bwd = SimOp(
-            name="mtp_head_bwd",
-            stream="compute",
-            duration=ops.roofline_time(mtp_bwd_cost, hw, is_large_gemm=True),
-            depends_on=[prev_dep] if prev_dep is not None else [],
-            weight_bytes=0,  # BWD: no weight counting
-            output_bytes=0,
-        )
-        all_ops.append(mtp_bwd)
-        prev_dep = len(all_ops) - 1
 
     # ------ DP gradient sync ---------------------------------------------------
     if dp > 1:

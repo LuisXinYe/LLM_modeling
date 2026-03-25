@@ -168,13 +168,12 @@ def op_gqa_attention(
         2 * d * d_qo + 2 * d * d_kv + 2 * d * d_kv + 2 * d_qo * d
     ) * batch_tokens
 
-    # Attention FLOPs: QK^T + Softmax*V = 4*d*L per query token
+    # Attention FLOPs: QK^T(2*d_qo*L) + Softmax*V(2*d_qo*L) = 4*d_qo*L per query token
+    # Uses d_qo (TP-partitioned) not d, since attention is computed per-head
     if phase == Phase.DECODE:
-        attn_flops = 4 * d * L * batch  # batch queries, each attending L positions
+        attn_flops = 4 * d_qo * L * batch
     else:
-        attn_flops = (
-            4 * d * L * batch_tokens
-        )  # each of B*S tokens attends to L positions
+        attn_flops = 4 * d_qo * L * batch_tokens
 
     fwd_flops = proj_flops + attn_flops
 
@@ -263,9 +262,9 @@ def op_swa_attention(
     ) * batch_tokens
 
     if phase == Phase.DECODE:
-        attn_flops = 4 * d * L * batch
+        attn_flops = 4 * d_qo * L * batch
     else:
-        attn_flops = 4 * d * L * batch_tokens
+        attn_flops = 4 * d_qo * L * batch_tokens
 
     fwd_flops = proj_flops + attn_flops
 
