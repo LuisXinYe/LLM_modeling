@@ -55,7 +55,9 @@ def _build_tp_allreduce(
     """Build a TP AllReduce SimOp for attention or FFN output."""
     msg = batch * seq_len * hidden_size * dtype_bytes
     cost = ops.op_allreduce(msg, group_size=tp)
-    duration = ops.comm_time(cost, hw, is_intra_node=_is_intra_node(tp, hw))
+    duration = ops.comm_time(
+        cost, hw, group_size=tp, is_intra_node=_is_intra_node(tp, hw), algorithm="ring"
+    )
     return SimOp(
         name=name,
         stream="tp_comm",
@@ -147,9 +149,10 @@ def build_layer_ops(
             dtype_bytes=dtype_bytes,
         )
     elif attn_type == "MLA":
+        tp_num_heads = max(1, layer_cfg.num_heads // tp)
         attn_cost = ops.op_mla_attention(
             hidden_size=d,
-            num_heads=layer_cfg.num_heads,
+            num_heads=tp_num_heads,
             head_dim=layer_cfg.head_dim,
             kv_compression_dim=layer_cfg.kv_compression_dim,
             query_compression_dim=layer_cfg.query_compression_dim,
@@ -264,7 +267,7 @@ def build_layer_ops(
                 name="ep_alltoall",
                 stream="ep_comm",
                 duration=ops.comm_time(
-                    a2a_cost, hw, is_intra_node=_is_intra_node(ep, hw)
+                    a2a_cost, hw, group_size=ep, is_intra_node=_is_intra_node(ep, hw), algorithm="alltoall"
                 ),
                 depends_on=[_idx(last_compute_local)],
                 weight_bytes=0,
@@ -310,6 +313,11 @@ def build_layer_ops(
         )
         result.append(mhc_op)
 
+    # Zero out weight_bytes for BWD ops to avoid double-counting in simulator
+    if phase == Phase.TRAIN_BWD:
+        for op in result:
+            op.weight_bytes = 0
+
     return result
 
 
@@ -331,10 +339,11 @@ def _estimate_param_count(model_cfg: ModelConfig, parallel_cfg: ParallelismConfi
         if attn_type in ("GQA", "MHA", "SWA"):
             tp_num_heads = max(1, layer_cfg.num_heads // tp)
             tp_kv_heads = max(1, layer_cfg.num_kv_heads // tp)
-            # Q: d*num_heads*head_dim; K,V: d*kv_heads*head_dim; O: d*d
+            # Q: d*num_heads*head_dim; K,V: d*kv_heads*head_dim
+            # O: RowParallel, input dim = tp_num_heads * head_dim
             q_params = d * tp_num_heads * layer_cfg.head_dim
             kv_params = 2 * d * tp_kv_heads * layer_cfg.head_dim
-            o_params = d * d
+            o_params = tp_num_heads * layer_cfg.head_dim * d
             param_bytes += (q_params + kv_params + o_params) * dtype_bytes
         elif attn_type == "MLA":
             w_b = (
@@ -440,7 +449,7 @@ def build_training_step(
     # ------ DP gradient sync ---------------------------------------------------
     if dp > 1:
         param_count = _estimate_param_count(model_cfg, parallel_cfg)
-        grad_bytes = param_count * dtype_bytes * 2  # gradient in fp32 or bf16
+        grad_bytes = param_count * dtype_bytes  # gradient same dtype as weights
 
         if parallel_cfg.zero_stage < 3:
             # AllReduce (ring)
@@ -449,8 +458,9 @@ def build_training_step(
             # ZeRO-3: ReduceScatter
             dp_cost = ops.op_reducescatter(grad_bytes, group_size=dp)
 
+        dp_algorithm = "ring_half" if parallel_cfg.zero_stage >= 3 else "ring"
         dp_duration = ops.comm_time(
-            dp_cost, hw, is_intra_node=_is_intra_node(dp, hw)
+            dp_cost, hw, group_size=dp, is_intra_node=_is_intra_node(dp, hw), algorithm=dp_algorithm
         )
         dp_sync = SimOp(
             name="dp_grad_sync",

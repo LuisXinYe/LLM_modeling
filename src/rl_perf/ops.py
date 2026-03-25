@@ -41,12 +41,54 @@ def roofline_time(cost: OpCost, hw: HardwareConfig, is_large_gemm: bool = True) 
     return max(compute_time, memory_time)
 
 
-def comm_time(cost: OpCost, hw: HardwareConfig, is_intra_node: bool = True) -> float:
-    """Communication time based on bandwidth and optional inter-node latency."""
+def comm_time(
+    cost: OpCost,
+    hw: HardwareConfig,
+    group_size: int = 1,
+    is_intra_node: bool = True,
+    algorithm: str = "ring",
+) -> float:
+    """Communication time with algorithm-aware latency modeling.
+
+    Ring AllReduce: 2*(N-1) steps, each msg/N, latency per step
+    Ring AllGather/ReduceScatter: (N-1) steps
+    Tree AllReduce: 2*ceil(log2(N)) steps (lower latency, same bandwidth)
+    AllToAll: (N-1) P2P exchanges in parallel; modeled as 1 latency step
+    P2P: single transfer
+
+    Ref: Thakur et al. "Optimization of Collective Communication Operations in MPICH"
+    """
+    if cost.comm_bytes <= 0:
+        return 0.0
+
     bw = hw.intra_node_bw_gb_s if is_intra_node else hw.inter_node_bw_gb_s
     bw_bytes = bw * 1e9 * hw.calibration.comm_efficiency
-    latency = 0 if is_intra_node else hw.inter_node_latency_us * 1e-6
-    return cost.comm_bytes / bw_bytes + latency if cost.comm_bytes > 0 else 0
+    lat = 0.0 if is_intra_node else hw.inter_node_latency_us * 1e-6
+
+    N = group_size
+    if N <= 1:
+        return 0.0
+
+    if algorithm == "ring":
+        # Ring AllReduce: 2*(N-1) steps
+        num_steps = 2 * (N - 1)
+        return cost.comm_bytes / bw_bytes + num_steps * lat
+    elif algorithm == "ring_half":
+        # AllGather or ReduceScatter: (N-1) steps
+        num_steps = N - 1
+        return cost.comm_bytes / bw_bytes + num_steps * lat
+    elif algorithm == "tree":
+        # Tree (double binary tree): 2*ceil(log2(N)) steps
+        import math
+        num_steps = 2 * math.ceil(math.log2(max(N, 2)))
+        return cost.comm_bytes / bw_bytes + num_steps * lat
+    elif algorithm == "alltoall":
+        # AllToAll: conceptually (N-1) parallel exchanges; 1 latency step (optimistic)
+        return cost.comm_bytes / bw_bytes + lat
+    elif algorithm == "p2p":
+        return cost.comm_bytes / bw_bytes + lat
+    else:
+        return cost.comm_bytes / bw_bytes + lat
 
 
 # ---------------------------------------------------------------------------
@@ -101,11 +143,15 @@ def op_gqa_attention(
     kv_len: int | None = None,
     dtype_bytes: int = 2,
 ) -> OpCost:
-    """GQA attention. FLOPs = (4+4G/H)d² + 4sd per token. Ref: GQA paper, Llama 2."""
+    """GQA attention. FLOPs = 2d·d_qo + 4d·d_kv + 4sd per token. Ref: GQA paper, Llama 2."""
     H = num_heads
     G = num_kv_heads
     d = hidden_size
     batch_tokens = batch * seq_len
+
+    # TP-partitioned output dimensions derived from head counts
+    d_qo = H * head_dim   # Q/O output dim (TP-partitioned via num_heads)
+    d_kv = G * head_dim   # KV output dim (TP-partitioned via num_kv_heads)
 
     # Effective KV length for attention computation
     if phase in (Phase.DECODE,):
@@ -114,8 +160,8 @@ def op_gqa_attention(
     else:
         L = seq_len  # prefill/train: attend to self
 
-    # Projection FLOPs: Q(d*d) + K(d * G/H * d) + V(d * G/H * d) + O(d*d)
-    proj_flops = (4 + 4 * G / H) * d * d * batch_tokens
+    # Projection FLOPs: Q(2*d*d_qo) + K(2*d*d_kv) + V(2*d*d_kv) + O(2*d_qo*d)
+    proj_flops = (2 * d * d_qo + 2 * d * d_kv + 2 * d * d_kv + 2 * d_qo * d) * batch_tokens
 
     # Attention FLOPs: QK^T + Softmax*V = 4*d*L per query token
     if phase == Phase.DECODE:
@@ -130,11 +176,11 @@ def op_gqa_attention(
     else:
         flops = fwd_flops
 
-    # Weight bytes: Q(d*d) + K(d * G/H * d) + V(d * G/H * d) + O(d*d)
-    weight_b = int((2 + 2 * G / H) * d * d * dtype_bytes)
+    # Weight bytes: Q(d*d_qo) + K(d*d_kv) + V(d*d_kv) + O(d_qo*d)
+    weight_b = (d * d_qo + d * d_kv + d * d_kv + d_qo * d) * dtype_bytes
 
-    # mem_rw: read weights + read input + write output
-    mem_rw = weight_b + batch_tokens * d * dtype_bytes + batch_tokens * d * dtype_bytes
+    # mem_rw: read weights + read input + write output (output dim is d_qo)
+    mem_rw = weight_b + batch_tokens * d * dtype_bytes + batch_tokens * d_qo * dtype_bytes
 
     # Output activation kept for backward
     if phase == Phase.TRAIN_FWD:
@@ -192,13 +238,18 @@ def op_swa_attention(
     d = hidden_size
     batch_tokens = batch * seq_len
 
+    # TP-partitioned output dimensions derived from head counts
+    d_qo = H * head_dim   # Q/O output dim (TP-partitioned via num_heads)
+    d_kv = G * head_dim   # KV output dim (TP-partitioned via num_kv_heads)
+
     # Effective KV length capped by window size
     if phase == Phase.DECODE:
         L = min(kv_len if kv_len is not None else seq_len, window_size)
     else:
         L = min(seq_len, window_size)
 
-    proj_flops = (4 + 4 * G / H) * d * d * batch_tokens
+    # Projection FLOPs: Q(2*d*d_qo) + K(2*d*d_kv) + V(2*d*d_kv) + O(2*d_qo*d)
+    proj_flops = (2 * d * d_qo + 2 * d * d_kv + 2 * d * d_kv + 2 * d_qo * d) * batch_tokens
 
     if phase == Phase.DECODE:
         attn_flops = 4 * d * L * batch
@@ -212,8 +263,10 @@ def op_swa_attention(
     else:
         flops = fwd_flops
 
-    weight_b = int((2 + 2 * G / H) * d * d * dtype_bytes)
-    mem_rw = weight_b + batch_tokens * d * dtype_bytes + batch_tokens * d * dtype_bytes
+    # Weight bytes: Q(d*d_qo) + K(d*d_kv) + V(d*d_kv) + O(d_qo*d)
+    weight_b = (d * d_qo + d * d_kv + d * d_kv + d_qo * d) * dtype_bytes
+    # mem_rw: read weights + read input + write output (output dim is d_qo)
+    mem_rw = weight_b + batch_tokens * d * dtype_bytes + batch_tokens * d_qo * dtype_bytes
 
     if phase == Phase.TRAIN_FWD:
         output_b = batch_tokens * d * dtype_bytes

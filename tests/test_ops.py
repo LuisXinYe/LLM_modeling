@@ -318,21 +318,62 @@ def test_op_swa_attention():
 def test_comm_time(hw: HardwareConfig):
     """Verify comm_time returns a reasonable positive value."""
     cost = op_allreduce(1e9, 8)  # 1 GB allreduce
-    t_intra = comm_time(cost, hw, is_intra_node=True)
-    t_inter = comm_time(cost, hw, is_intra_node=False)
+    t_intra = comm_time(cost, hw, group_size=8, is_intra_node=True, algorithm="ring")
+    t_inter = comm_time(cost, hw, group_size=8, is_intra_node=False, algorithm="ring")
 
     assert t_intra > 0
     assert t_inter > 0
     # Inter-node should be slower (lower BW + latency)
     assert t_inter > t_intra
 
-    # Verify formula: comm_bytes / (bw * eff)
+    # Verify intra-node formula: comm_bytes / (bw * eff) only (no latency)
     expected_intra = cost.comm_bytes / (hw.intra_node_bw_gb_s * 1e9 * hw.calibration.comm_efficiency)
     assert t_intra == pytest.approx(expected_intra)
 
     # Zero comm_bytes => zero time
     zero_cost = OpCost(comm_bytes=0)
-    assert comm_time(zero_cost, hw) == 0
+    assert comm_time(zero_cost, hw, group_size=8) == 0
+
+
+def test_comm_time_ring_allreduce_latency(hw: HardwareConfig):
+    """Ring AllReduce latency scales with 2*(N-1) steps."""
+    cost = OpCost(comm_bytes=1e9)
+    t8 = comm_time(cost, hw, group_size=8, is_intra_node=False, algorithm="ring")
+    t16 = comm_time(cost, hw, group_size=16, is_intra_node=False, algorithm="ring")
+    # 16 nodes has more latency steps than 8 nodes
+    assert t16 > t8
+
+
+def test_comm_time_ring_vs_tree(hw: HardwareConfig):
+    """Tree AllReduce has fewer latency steps than ring for large groups."""
+    cost = OpCost(comm_bytes=1e6)  # Small message: latency-dominated
+    t_ring = comm_time(cost, hw, group_size=64, is_intra_node=False, algorithm="ring")
+    t_tree = comm_time(cost, hw, group_size=64, is_intra_node=False, algorithm="tree")
+    # Tree: 2*log2(64)=12 steps vs Ring: 2*63=126 steps
+    assert t_tree < t_ring
+
+
+def test_comm_time_intra_node_no_latency(hw: HardwareConfig):
+    """Intra-node communication has zero latency overhead."""
+    cost = OpCost(comm_bytes=1e9)
+    t = comm_time(cost, hw, group_size=8, is_intra_node=True, algorithm="ring")
+    # Should be purely bandwidth-limited
+    expected_bw_time = 1e9 / (hw.intra_node_bw_gb_s * 1e9 * hw.calibration.comm_efficiency)
+    assert t == pytest.approx(expected_bw_time)
+
+
+def test_comm_time_alltoall(hw: HardwareConfig):
+    """AllToAll has minimal latency overhead."""
+    cost = OpCost(comm_bytes=1e9)
+    t = comm_time(cost, hw, group_size=16, is_intra_node=False, algorithm="alltoall")
+    assert t > 0
+
+
+def test_comm_time_group_size_1(hw: HardwareConfig):
+    """Group size 1 = no communication."""
+    cost = OpCost(comm_bytes=1e9)
+    t = comm_time(cost, hw, group_size=1, is_intra_node=False, algorithm="ring")
+    assert t == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -354,3 +395,17 @@ def test_op_linear_train_bwd_output_bytes():
     """Backward pass does not produce new activations to keep."""
     cost = op_linear(4096, 4096, 64, Phase.TRAIN_BWD)
     assert cost.output_bytes == 0
+
+
+def test_gqa_flops_scale_with_tp():
+    """FLOPs should scale proportionally when heads are TP-partitioned."""
+    # Full model: 32 heads, 8 kv_heads
+    full = op_gqa_attention(num_heads=32, num_kv_heads=8, head_dim=128,
+                            hidden_size=4096, batch=1, seq_len=512, phase=Phase.TRAIN_FWD)
+    # TP=8: 4 heads, 1 kv_head
+    tp8 = op_gqa_attention(num_heads=4, num_kv_heads=1, head_dim=128,
+                           hidden_size=4096, batch=1, seq_len=512, phase=Phase.TRAIN_FWD)
+    # Projection FLOPs should be ~1/8 of full
+    # (not exact 1/8 because attention FLOPs don't change with TP)
+    assert tp8.flops < full.flops
+    assert tp8.flops < full.flops / 4  # at least 4x reduction
