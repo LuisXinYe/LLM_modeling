@@ -1,6 +1,7 @@
-from rl_perf.config import ModelConfig, HardwareConfig, ParallelismConfig, RLConfig
-from rl_perf.pipeline import generation_time, training_time, epoch_time, bottleneck_analysis
-from rl_perf.report import TargetReport, MemoryProfile
+from rl_perf.config import HardwareConfig, ModelConfig, ParallelismConfig, RLConfig
+from rl_perf.pipeline import bottleneck_analysis, epoch_time, generation_time, training_time
+from rl_perf.report import MemoryProfile, TargetReport
+from rl_perf.simulator import SimResult
 
 
 class RLPerformanceModel:
@@ -54,7 +55,6 @@ class RLPerformanceModel:
 
     def _compute_memory_profile(self, train_sim, gen_sim, train_parallel, gen_parallel, rl_cfg):
         """Memory profile: weight/activation from SimResult, KV/optimizer/ref analytical."""
-        from rl_perf.simulator import SimResult
 
         # From SimResult (ephemeral memory)
         train_weight_gb = train_sim.weight_bytes / 1e9

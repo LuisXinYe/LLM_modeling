@@ -41,35 +41,16 @@ def _is_intra_node(group_size: int, hw: HardwareConfig) -> bool:
     return group_size <= hw.devices_per_node
 
 
-def _build_tp_allreduce(
-    name: str,
-    batch: int,
-    seq_len: int,
-    hidden_size: int,
-    dtype_bytes: int,
-    tp: int,
-    hw: HardwareConfig,
-    dep_idx: int,
-    start_idx: int,
-) -> SimOp:
-    """Build a TP AllReduce SimOp for attention or FFN output."""
-    msg = batch * seq_len * hidden_size * dtype_bytes
-    cost = ops.op_allreduce(msg, group_size=tp)
-    duration = ops.comm_time(
-        cost, hw, group_size=tp, is_intra_node=_is_intra_node(tp, hw), algorithm="ring"
-    )
-    return SimOp(
-        name=name,
-        stream="tp_comm",
-        duration=duration,
-        depends_on=[dep_idx],
-        weight_bytes=0,
-        output_bytes=0,
-    )
+_COLLECTIVE_OPS = {
+    "allreduce": (ops.op_allreduce, "ring"),
+    "allgather": (ops.op_allgather, "ring_half"),
+    "reducescatter": (ops.op_reducescatter, "ring_half"),
+}
 
 
-def _build_tp_allgather(
+def _build_tp_comm(
     name: str,
+    collective: str,
     batch: int,
     seq_len: int,
     hidden_size: int,
@@ -78,37 +59,12 @@ def _build_tp_allgather(
     hw: HardwareConfig,
     dep_idx: int,
 ) -> SimOp:
-    """Build a TP AllGather SimOp for SP (sequence parallelism)."""
+    """Build a TP collective comm SimOp (allreduce, allgather, or reducescatter)."""
+    op_fn, algorithm = _COLLECTIVE_OPS[collective]
     msg = batch * seq_len * hidden_size * dtype_bytes
-    cost = ops.op_allgather(msg, group_size=tp)
+    cost = op_fn(msg, group_size=tp)
     duration = ops.comm_time(
-        cost, hw, group_size=tp, is_intra_node=_is_intra_node(tp, hw), algorithm="ring_half"
-    )
-    return SimOp(
-        name=name,
-        stream="tp_comm",
-        duration=duration,
-        depends_on=[dep_idx],
-        weight_bytes=0,
-        output_bytes=0,
-    )
-
-
-def _build_tp_reducescatter(
-    name: str,
-    batch: int,
-    seq_len: int,
-    hidden_size: int,
-    dtype_bytes: int,
-    tp: int,
-    hw: HardwareConfig,
-    dep_idx: int,
-) -> SimOp:
-    """Build a TP ReduceScatter SimOp for SP (sequence parallelism)."""
-    msg = batch * seq_len * hidden_size * dtype_bytes
-    cost = ops.op_reducescatter(msg, group_size=tp)
-    duration = ops.comm_time(
-        cost, hw, group_size=tp, is_intra_node=_is_intra_node(tp, hw), algorithm="ring_half"
+        cost, hw, group_size=tp, is_intra_node=_is_intra_node(tp, hw), algorithm=algorithm
     )
     return SimOp(
         name=name,
@@ -247,8 +203,8 @@ def build_layer_ops(
 
     # SP: insert AllGather before attention if sp=True and tp>1
     if parallel_cfg.sp and tp > 1:
-        ag_attn = _build_tp_allgather(
-            name="tp_allgather_attn",
+        ag_attn = _build_tp_comm(
+            name="tp_allgather_attn", collective="allgather",
             batch=batch,
             seq_len=seq_len,
             hidden_size=d,
@@ -273,8 +229,8 @@ def build_layer_ops(
     # ---- 2. TP comm (attention) ---------------------------------------------
     if tp > 1:
         if parallel_cfg.sp:
-            tp_attn_comm = _build_tp_reducescatter(
-                name="tp_reducescatter_attn",
+            tp_attn_comm = _build_tp_comm(
+                name="tp_reducescatter_attn", collective="reducescatter",
                 batch=batch,
                 seq_len=seq_len,
                 hidden_size=d,
@@ -284,8 +240,8 @@ def build_layer_ops(
                 dep_idx=_idx(len(result) - 1),  # depends on attention
             )
         else:
-            tp_attn_comm = _build_tp_allreduce(
-                name="tp_allreduce_attn",
+            tp_attn_comm = _build_tp_comm(
+                name="tp_allreduce_attn", collective="allreduce",
                 batch=batch,
                 seq_len=seq_len,
                 hidden_size=d,
@@ -293,7 +249,6 @@ def build_layer_ops(
                 tp=tp,
                 hw=hw,
                 dep_idx=_idx(len(result) - 1),  # depends on attention
-                start_idx=_idx(len(result)),
             )
         result.append(tp_attn_comm)
         last_compute_idx = _idx(len(result) - 1)
@@ -316,8 +271,8 @@ def build_layer_ops(
     # ---- 4. FFN -------------------------------------------------------------
     # SP: insert AllGather before FFN if sp=True and tp>1
     if parallel_cfg.sp and tp > 1:
-        ag_ffn = _build_tp_allgather(
-            name="tp_allgather_ffn",
+        ag_ffn = _build_tp_comm(
+            name="tp_allgather_ffn", collective="allgather",
             batch=batch,
             seq_len=seq_len,
             hidden_size=d,
@@ -402,8 +357,8 @@ def build_layer_ops(
     # ---- 5. TP comm (FFN) ----------------------------------------------------
     if tp > 1:
         if parallel_cfg.sp:
-            tp_ffn_comm = _build_tp_reducescatter(
-                name="tp_reducescatter_ffn",
+            tp_ffn_comm = _build_tp_comm(
+                name="tp_reducescatter_ffn", collective="reducescatter",
                 batch=batch,
                 seq_len=seq_len,
                 hidden_size=d,
@@ -413,8 +368,8 @@ def build_layer_ops(
                 dep_idx=_idx(last_compute_local),
             )
         else:
-            tp_ffn_comm = _build_tp_allreduce(
-                name="tp_allreduce_ffn",
+            tp_ffn_comm = _build_tp_comm(
+                name="tp_allreduce_ffn", collective="allreduce",
                 batch=batch,
                 seq_len=seq_len,
                 hidden_size=d,
@@ -422,7 +377,6 @@ def build_layer_ops(
                 tp=tp,
                 hw=hw,
                 dep_idx=_idx(last_compute_local),
-                start_idx=_idx(last_compute_local + 1),
             )
         result.append(tp_ffn_comm)
         last_compute_local = len(result) - 1

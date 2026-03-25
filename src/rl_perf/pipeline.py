@@ -1,7 +1,9 @@
 import math
-from rl_perf.config import ModelConfig, HardwareConfig, ParallelismConfig, RLConfig
+
+from rl_perf import ops
 from rl_perf.builder import build_training_step, build_generation_step
-from rl_perf.simulator import simulate
+from rl_perf.config import HardwareConfig, ModelConfig, ParallelismConfig, Phase, RLConfig
+from rl_perf.simulator import SimResult, simulate
 
 
 def effective_response_len(avg: int, std: int = None, batch_size: int = 1, max_len: int = None) -> float:
@@ -15,11 +17,12 @@ def effective_response_len(avg: int, std: int = None, batch_size: int = 1, max_l
     return avg
 
 
-def generation_time(model_cfg, hw, parallel_cfg, rl_cfg) -> float:
-    """Total generation time in seconds for all responses."""
+def generation_time(model_cfg, hw, parallel_cfg, rl_cfg):
+    """Total generation time in seconds. Returns (total_time, sim_result, t_per_batch)."""
     prefill_ops, decode_ops = build_generation_step(model_cfg, hw, parallel_cfg, rl_cfg)
 
-    t_prefill = simulate(prefill_ops).wall_clock_time
+    prefill_sim = simulate(prefill_ops)
+    t_prefill = prefill_sim.wall_clock_time
     t_decode_per_token = simulate(decode_ops).wall_clock_time
 
     eff_len = effective_response_len(
@@ -31,17 +34,41 @@ def generation_time(model_cfg, hw, parallel_cfg, rl_cfg) -> float:
 
     t_per_batch = t_prefill + eff_len * t_decode_per_token
 
+    # Speculative decoding throughput multiplier (spec §4.3)
+    if rl_cfg.use_speculative_decoding:
+
+        mtp_depth = (model_cfg.auxiliary or {}).get("mtp_depth", 0)
+        if mtp_depth > 0:
+            acceptance_len = rl_cfg.mtp_acceptance_len or mtp_depth
+            draft_cost = ops.op_mtp_head(
+                model_cfg.hidden_size,
+                model_cfg.vocab_size,
+                mtp_depth,
+                batch_tokens=rl_cfg.gen_batch_size,
+                phase=Phase.DECODE,
+                dtype_bytes=model_cfg.dtype_bytes,
+            )
+            draft_overhead = (
+                ops.roofline_time(draft_cost, hw) / t_decode_per_token
+                if t_decode_per_token > 0
+                else 0
+            )
+            throughput_multiplier = acceptance_len / (1 + draft_overhead)
+            if throughput_multiplier > 0:
+                t_per_batch = t_prefill + (eff_len / throughput_multiplier) * t_decode_per_token
+
     total_responses = rl_cfg.total_responses
     gen_dp = parallel_cfg.dp  # number of independent generation instances
     batches = math.ceil(total_responses / (rl_cfg.gen_batch_size * gen_dp))
 
-    return batches * t_per_batch
+    return batches * t_per_batch, prefill_sim, t_per_batch
 
 
-def training_time(model_cfg, hw, parallel_cfg, rl_cfg) -> float:
-    """Total training time in seconds for all responses."""
+def training_time(model_cfg, hw, parallel_cfg, rl_cfg):
+    """Total training time in seconds. Returns (total_time, sim_result)."""
     train_ops = build_training_step(model_cfg, hw, parallel_cfg, rl_cfg)
-    t_step = simulate(train_ops).wall_clock_time
+    train_sim = simulate(train_ops)
+    t_step = train_sim.wall_clock_time
 
     # PP bubble ratio: (pp-1) / (M + pp-1) where M = gradient_accumulation_steps
     pp = parallel_cfg.pp
@@ -66,7 +93,7 @@ def training_time(model_cfg, hw, parallel_cfg, rl_cfg) -> float:
     effective_batch = rl_cfg.train_micro_batch_size * rl_cfg.gradient_accumulation_steps * parallel_cfg.dp
     num_steps = math.ceil(total_responses / effective_batch)
 
-    return num_steps * t_step
+    return num_steps * t_step, train_sim
 
 
 def epoch_time(t_gen: float, t_train: float, startup_overhead: float = 0, colocated: bool = False) -> float:

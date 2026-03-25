@@ -6,6 +6,7 @@ Use roofline_time() to convert OpCost → seconds given a HardwareConfig.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from rl_perf.config import HardwareConfig, Phase
@@ -81,7 +82,6 @@ def comm_time(
         return cost.comm_bytes / bw_bytes + num_steps * lat
     elif algorithm == "tree":
         # Tree (double binary tree): 2*ceil(log2(N)) steps
-        import math
 
         num_steps = 2 * math.ceil(math.log2(max(N, 2)))
         return cost.comm_bytes / bw_bytes + num_steps * lat
