@@ -53,7 +53,7 @@ class ModelConfig(BaseModel):
         if self.layers:
             return self.layers
         if self.default_layer:
-            return [self.default_layer] * self.num_layers
+            return [self.default_layer.model_copy() for _ in range(self.num_layers)]
         raise ValueError("Must provide default_layer or layers")
 
     @property

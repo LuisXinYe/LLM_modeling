@@ -144,3 +144,13 @@ def test_generation_time_nonzero(model_cfg, hw, parallel_cfg, rl_cfg):
 def test_training_time_nonzero(model_cfg, hw, parallel_cfg, rl_cfg):
     t = training_time(model_cfg, hw, parallel_cfg, rl_cfg)
     assert t > 0
+
+
+def test_epoch_time_colocated():
+    t = epoch_time(t_gen=10.0, t_train=15.0, colocated=True)
+    assert t == pytest.approx(25.0)  # gen + train
+
+
+def test_epoch_time_separated():
+    t = epoch_time(t_gen=10.0, t_train=15.0, startup_overhead=0.5, colocated=False)
+    assert t == pytest.approx(15.5)  # max + startup

@@ -21,7 +21,7 @@ class RLPerformanceModel:
         t_prefill = simulate(prefill_ops).wall_clock_time
         startup = t_prefill  # simplified
 
-        t_epoch = epoch_time(t_gen, t_train, startup)
+        t_epoch = epoch_time(t_gen, t_train, startup, colocated=rl_cfg.colocated)
         bottleneck, slack = bottleneck_analysis(t_gen, t_train)
 
         # Compute TPS targets
@@ -96,7 +96,10 @@ class RLPerformanceModel:
             optim_bytes /= train_parallel.dp
         optimizer_gb = optim_bytes / 1e9
 
-        # Activation: rough estimate sbh * 34 / TP
+        # Activation memory per layer: Megatron-LM formula sbh * (34 + 5*a*s/h)
+        # The "34" factor accounts for: LayerNorm(4) + QKV(6) + attn_output(2) +
+        # FFN_gate_up(8) + FFN_down(2) + dropout_masks + intermediates.
+        # Note: approximate; MoE models may differ. Ref: Megatron SC'21 paper.
         s = rl_cfg.avg_prompt_len + rl_cfg.avg_response_len
         b = rl_cfg.train_micro_batch_size
         act_per_layer = s * b * d * 34 * dtype_b / train_parallel.tp

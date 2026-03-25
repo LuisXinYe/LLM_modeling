@@ -43,6 +43,13 @@ def training_time(model_cfg, hw, parallel_cfg, rl_cfg) -> float:
     train_ops = build_training_step(model_cfg, hw, parallel_cfg, rl_cfg)
     t_step = simulate(train_ops).wall_clock_time
 
+    # PP bubble ratio: (pp-1) / (M + pp-1) where M = gradient_accumulation_steps
+    pp = parallel_cfg.pp
+    if pp > 1:
+        M = rl_cfg.gradient_accumulation_steps
+        bubble_ratio = (pp - 1) / (M + pp - 1)
+        t_step *= (1 + bubble_ratio)
+
     # Apply perf penalties for recomputation/offload
     penalty = 1.0
     if parallel_cfg.full_recomputation:
@@ -62,8 +69,12 @@ def training_time(model_cfg, hw, parallel_cfg, rl_cfg) -> float:
     return num_steps * t_step
 
 
-def epoch_time(t_gen: float, t_train: float, startup_overhead: float = 0) -> float:
-    """Two-stage pipeline epoch time."""
+def epoch_time(t_gen: float, t_train: float, startup_overhead: float = 0, colocated: bool = False) -> float:
+    """Two-stage pipeline epoch time.
+    Colocated: same GPUs, gen+train serial.
+    Separated: different GPU pools, gen/train parallel."""
+    if colocated:
+        return t_gen + t_train
     return max(t_gen, t_train) + startup_overhead
 
 
