@@ -134,3 +134,70 @@ def test_e2e_full_suite_print(hw, rl_cfg, capsys):
         print(f"Gen TPS: {report.gen_tps_target:,.0f} | Train TPS: {report.train_tps_target:,.0f}")
         print(f"Memory: train={report.memory.total_train_gb:.1f}GB gen={report.memory.total_gen_gb:.1f}GB")
         print(f"{'='*60}")
+
+
+def test_e2e_deepseekv3_with_mtp(rl_cfg):
+    """DeepSeek V3 with mtp_depth=1 should produce valid results."""
+    mc = load_model_config(str(CONFIGS_DIR / "models" / "deepseekv3_671b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+
+    perf = RLPerformanceModel(mc, hw)
+    gen_p = ParallelismConfig(tp=8, pp=1, dp=48, ep=1)
+    train_p = ParallelismConfig(tp=8, pp=4, dp=4, ep=8)
+
+    report = perf.derive_targets(
+        total_devices=train_p.total_devices,
+        rl_cfg=rl_cfg, gen_parallel=gen_p, train_parallel=train_p,
+        time_budget_hours=48,
+    )
+    assert report.epoch_time_hours > 0
+    assert report.memory is not None
+
+    # MTP should increase training time vs no-mtp
+    mc_no_mtp = mc.model_copy(update={"auxiliary": None})
+    perf_no_mtp = RLPerformanceModel(mc_no_mtp, hw)
+    report_no_mtp = perf_no_mtp.derive_targets(
+        total_devices=train_p.total_devices, rl_cfg=rl_cfg,
+        gen_parallel=gen_p, train_parallel=train_p,
+    )
+    assert report.train_time_hours >= report_no_mtp.train_time_hours
+
+
+def test_e2e_sp_cp_config(rl_cfg):
+    """SP and CP configurations should produce valid results."""
+    mc = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+
+    perf = RLPerformanceModel(mc, hw)
+
+    # SP enabled with TP
+    gen_p = ParallelismConfig(tp=8, pp=1, dp=8, sp=True)
+    train_p = ParallelismConfig(tp=8, pp=1, dp=8, sp=True)
+    report = perf.derive_targets(64, rl_cfg, gen_p, train_p)
+    assert report.epoch_time_hours > 0
+    assert report.memory.weight_gb > 0
+
+    # CP enabled
+    gen_p_cp = ParallelismConfig(tp=8, pp=1, dp=4, cp=2)
+    train_p_cp = ParallelismConfig(tp=8, pp=1, dp=4, cp=2)
+    report_cp = perf.derive_targets(64, rl_cfg, gen_p_cp, train_p_cp)
+    assert report_cp.epoch_time_hours > 0
+
+
+def test_e2e_sensitivity_sweep(rl_cfg):
+    """Sensitivity sweep should return valid results for all values."""
+    mc = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+
+    perf = RLPerformanceModel(mc, hw)
+    gen_p = ParallelismConfig(tp=8, pp=1, dp=8)
+    train_p = ParallelismConfig(tp=8, pp=1, dp=8)
+
+    results = perf.sensitivity(
+        rl_cfg=rl_cfg, param_name="group_size", values=[4, 8, 16],
+        total_devices=64, gen_parallel=gen_p, train_parallel=train_p,
+    )
+    assert len(results) == 3
+    for r in results:
+        assert r.epoch_time_hours > 0
+        assert r.memory is not None
