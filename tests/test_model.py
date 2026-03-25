@@ -93,6 +93,7 @@ def test_feasibility_check(perf_model, rl_cfg, parallel_cfg):
     assert isinstance(report, TargetReport)
     assert report.epoch_time_hours > 0
     assert report.within_budget is True  # no budget provided → always feasible
+    assert isinstance(report.feasible, bool)
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +172,8 @@ def test_format_table(perf_model, rl_cfg, parallel_cfg):
     assert "Memory" in table
     # Should contain either OK or OOM
     assert "OK" in table or "OOM" in table
+    # Should contain FEASIBLE status
+    assert "FEASIBLE" in table
 
 
 # ---------------------------------------------------------------------------
@@ -275,3 +278,53 @@ def test_weight_bytes_no_double_count():
     # Since BWD ops have weight_bytes=0, this sum equals fwd-only weight
     sim = simulate(ops_list)
     assert sim.weight_bytes == pytest.approx(fwd_weight)
+
+
+# ---------------------------------------------------------------------------
+# Test 12: feasible field — True only when within_budget AND memory OK
+# ---------------------------------------------------------------------------
+
+
+def test_feasible_field_time_and_memory(perf_model, rl_cfg, parallel_cfg):
+    """feasible should be True only when within_budget AND memory OK."""
+    report = perf_model.derive_targets(
+        total_devices=64, rl_cfg=rl_cfg,
+        gen_parallel=parallel_cfg, train_parallel=parallel_cfg,
+        time_budget_hours=100.0,
+    )
+    assert hasattr(report, 'feasible')
+    assert isinstance(report.feasible, bool)
+    if report.memory.train_feasible and report.memory.gen_feasible:
+        assert report.feasible is True
+
+
+# ---------------------------------------------------------------------------
+# Test 13: feasible False when over time
+# ---------------------------------------------------------------------------
+
+
+def test_feasible_false_when_over_time(perf_model, rl_cfg, parallel_cfg):
+    """feasible should be False when time budget exceeded."""
+    report = perf_model.derive_targets(
+        total_devices=64, rl_cfg=rl_cfg,
+        gen_parallel=parallel_cfg, train_parallel=parallel_cfg,
+        time_budget_hours=0.000001,
+    )
+    assert report.within_budget is False
+    assert report.feasible is False
+
+
+# ---------------------------------------------------------------------------
+# Test 14: feasibility_check with time_budget_hours
+# ---------------------------------------------------------------------------
+
+
+def test_feasibility_check_with_time_budget(perf_model, rl_cfg, parallel_cfg):
+    """feasibility_check should accept optional time_budget_hours."""
+    report = perf_model.feasibility_check(
+        total_devices=64, rl_cfg=rl_cfg,
+        gen_parallel=parallel_cfg, train_parallel=parallel_cfg,
+        time_budget_hours=0.000001,
+    )
+    assert report.within_budget is False
+    assert report.feasible is False

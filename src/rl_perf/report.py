@@ -32,17 +32,23 @@ class TargetReport:
     memory: MemoryProfile
     gen_parallel: object = None
     train_parallel: object = None
+    feasible: bool = True
 
 
 def format_table(report: TargetReport) -> str:
     """Format as rich-compatible text table."""
-    budget_str = "FEASIBLE" if report.within_budget else "EXCEEDS BUDGET"
+    reasons = []
+    if not report.within_budget:
+        reasons.append("OVER TIME")
+    if not report.memory.train_feasible or not report.memory.gen_feasible:
+        reasons.append("OOM")
+    status_str = "FEASIBLE" if not reasons else f"NOT FEASIBLE: {' + '.join(reasons)}"
     mem = report.memory
     lines = [
         "=" * 60,
         "          RL Training Performance Report",
         "=" * 60,
-        f" Epoch time:        {report.epoch_time_hours:.2f} hours  [{budget_str}]",
+        f" Epoch time:        {report.epoch_time_hours:.2f} hours  [{status_str}]",
         f" Bottleneck:        {report.bottleneck} (slack: {report.bottleneck_slack:.1%})",
         "-" * 60,
         " Generation:",

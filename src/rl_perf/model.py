@@ -33,6 +33,7 @@ class RLPerformanceModel:
         memory = self._compute_memory_profile(train_sim, gen_sim, train_parallel, gen_parallel, rl_cfg)
 
         within_budget = time_budget_hours is None or (t_epoch / 3600) <= time_budget_hours
+        feasible = within_budget and memory.train_feasible and memory.gen_feasible
 
         return TargetReport(
             epoch_time_hours=t_epoch / 3600,
@@ -48,10 +49,11 @@ class RLPerformanceModel:
             memory=memory,
             gen_parallel=gen_parallel,
             train_parallel=train_parallel,
+            feasible=feasible,
         )
 
-    def feasibility_check(self, total_devices, rl_cfg, gen_parallel, train_parallel):
-        return self.derive_targets(total_devices, rl_cfg, gen_parallel, train_parallel, time_budget_hours=None)
+    def feasibility_check(self, total_devices, rl_cfg, gen_parallel, train_parallel, time_budget_hours=None):
+        return self.derive_targets(total_devices, rl_cfg, gen_parallel, train_parallel, time_budget_hours=time_budget_hours)
 
     def _compute_memory_profile(self, train_sim, gen_sim, train_parallel, gen_parallel, rl_cfg):
         """Memory profile: weight/activation from SimResult, KV/optimizer/ref analytical."""
