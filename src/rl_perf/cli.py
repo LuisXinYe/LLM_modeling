@@ -128,3 +128,14 @@ def check(
         typer.echo(_format_output(report, fmt))
 
     _run_safely(_run)
+
+
+@app.command()
+def ui(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind host (0.0.0.0 for LAN)"),
+    port: int = typer.Option(7860, "--port", help="Port number"),
+    share: bool = typer.Option(False, "--share", help="Create public Gradio link"),
+):
+    """Launch the web GUI."""
+    from rl_perf.ui.app import launch
+    launch(host=host, port=port, share=share)
