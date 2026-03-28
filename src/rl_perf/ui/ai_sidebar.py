@@ -9,7 +9,9 @@ from rl_perf.report import TargetReport
 def format_result_summary(report: TargetReport) -> str:
     """Generate human-readable summary of prediction results."""
     lines = []
-    lines.append(f"📌 **Bottleneck: {report.bottleneck}** (slack {report.bottleneck_slack:.0%})")
+    lines.append(
+        f"📌 **Bottleneck: {report.bottleneck}** (slack {report.bottleneck_slack:.0%})"
+    )
 
     if report.bottleneck == "generation":
         lines.append("Generation dominates — decode phase is memory-bandwidth bound.")
@@ -29,14 +31,20 @@ def format_result_summary(report: TargetReport) -> str:
     mem = report.memory
     if not mem.train_feasible:
         lines.append("")
-        lines.append(f"⚠️ **Training OOM**: {mem.total_train_gb:.1f} GB > {mem.usable_hbm_gb:.1f} GB")
+        lines.append(
+            f"⚠️ **Training OOM**: {mem.total_train_gb:.1f} GB > {mem.usable_hbm_gb:.1f} GB"
+        )
         lines.append(f"   Optimizer: {mem.optimizer_gb:.1f} GB — try ZeRO stage 2+")
         if mem.ref_model_gb > 0:
             lines.append(f"   Ref model: {mem.ref_model_gb:.1f} GB — try CPU offload")
     if not mem.gen_feasible:
         lines.append("")
-        lines.append(f"⚠️ **Generation OOM**: {mem.total_gen_gb:.1f} GB > {mem.usable_hbm_gb:.1f} GB")
-        lines.append(f"   KV cache: {mem.kv_cache_gb:.1f} GB — reduce gen_batch_size or max_response_len")
+        lines.append(
+            f"⚠️ **Generation OOM**: {mem.total_gen_gb:.1f} GB > {mem.usable_hbm_gb:.1f} GB"
+        )
+        lines.append(
+            f"   KV cache: {mem.kv_cache_gb:.1f} GB — reduce gen_batch_size or max_response_len"
+        )
 
     return "\n".join(lines)
 
