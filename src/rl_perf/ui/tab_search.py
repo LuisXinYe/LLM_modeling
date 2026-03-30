@@ -38,7 +38,8 @@ def build_tab() -> dict:
         components["mode"] = mode
 
         # Pareto options
-        with gr.Group(visible=True) as pareto_group:
+        with gr.Group(visible=True, elem_classes=["section-group"]) as pareto_group:
+            gr.Markdown("### Pareto Search", elem_classes=["section-header"])
             device_counts = gr.Textbox(
                 label="Device Counts (comma separated)",
                 value="8, 16, 32, 64, 128",
@@ -54,7 +55,8 @@ def build_tab() -> dict:
         components["pareto_group"] = pareto_group
 
         # Sensitivity options
-        with gr.Group(visible=False) as sens_group:
+        with gr.Group(visible=False, elem_classes=["section-group"]) as sens_group:
+            gr.Markdown("### Sensitivity Analysis", elem_classes=["section-header"])
             sweep_param = gr.Dropdown(
                 choices=_SWEEP_PARAMS,
                 value="group_size",
@@ -81,7 +83,7 @@ def build_tab() -> dict:
 
         search_btn = gr.Button("Run Search", variant="primary")
         components["search_btn"] = search_btn
-        search_status = gr.Markdown("")
+        search_status = gr.HTML("")
         components["search_status"] = search_status
 
         with gr.Row():

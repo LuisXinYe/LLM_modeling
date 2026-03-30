@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 import gradio as gr
@@ -23,6 +24,173 @@ from rl_perf.ui.plots import (
     build_timeline_figure,
 )
 from rl_perf.ui import tab_model, tab_hardware, tab_rl, tab_search, results
+
+# ---------------------------------------------------------------------------
+# Custom CSS for professional dashboard look
+# ---------------------------------------------------------------------------
+_CUSTOM_CSS = """
+/* ── Spacing system ── */
+:root {
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --accent: #CF0A2C;
+  --accent-light: rgba(207, 10, 44, 0.08);
+  --surface: #FAFAF9;
+  --surface-alt: #F5F4F2;
+  --border-subtle: #E8E5E0;
+  --text-primary: #1A1A1A;
+  --text-secondary: #6B7280;
+}
+
+/* ── Header branding ── */
+#app-header {
+  background: linear-gradient(135deg, var(--surface) 0%, #FFF 100%);
+  border-bottom: 3px solid var(--accent);
+  padding: var(--space-lg) var(--space-xl) var(--space-md) !important;
+  margin-bottom: var(--space-lg) !important;
+}
+#app-header h1 {
+  font-size: 1.75rem !important;
+  font-weight: 700 !important;
+  color: var(--text-primary) !important;
+  letter-spacing: -0.02em;
+  margin: 0 !important;
+}
+#app-header p {
+  color: var(--text-secondary) !important;
+  font-size: 0.95rem !important;
+  margin: var(--space-xs) 0 0 0 !important;
+}
+
+/* ── Section groups ── */
+.section-group {
+  background: var(--surface) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 8px !important;
+  padding: var(--space-lg) !important;
+  margin-bottom: var(--space-md) !important;
+}
+
+/* ── Section headers (left-accent bar) ── */
+.section-header {
+  border-left: 3px solid var(--accent) !important;
+  padding-left: var(--space-md) !important;
+  margin-top: var(--space-lg) !important;
+  margin-bottom: var(--space-sm) !important;
+}
+.section-header h3,
+.section-header h4 {
+  font-size: 0.9rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+  color: var(--text-secondary) !important;
+  margin: 0 !important;
+}
+
+/* ── KPI card grid ── */
+.kpi-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, 1fr) !important;
+  gap: var(--space-md) !important;
+  margin-bottom: var(--space-lg) !important;
+}
+
+.kpi-card {
+  background: #FFF !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 8px !important;
+  padding: var(--space-lg) var(--space-md) !important;
+  text-align: center !important;
+  transition: box-shadow 0.15s ease;
+  min-width: 0 !important;
+}
+.kpi-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.kpi-card .kpi-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-xs);
+}
+.kpi-card .kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.kpi-card .kpi-detail {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: var(--space-xs);
+}
+.kpi-card.kpi-feasible {
+  border-top: 3px solid #16A34A;
+}
+.kpi-card.kpi-infeasible {
+  border-top: 3px solid var(--accent);
+}
+.kpi-card.kpi-neutral {
+  border-top: 3px solid #D4A843;
+}
+
+/* ── Results area ── */
+.results-section {
+  background: var(--surface-alt) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 10px !important;
+  padding: var(--space-xl) !important;
+  margin-top: var(--space-lg) !important;
+}
+
+/* ── Placeholder message ── */
+.results-placeholder {
+  text-align: center !important;
+  padding: var(--space-2xl) var(--space-lg) !important;
+}
+.results-placeholder p {
+  color: var(--text-secondary) !important;
+  font-size: 0.95rem !important;
+}
+
+/* ── Error styling ── */
+.prediction-error {
+  background: rgba(207, 10, 44, 0.06) !important;
+  border-left: 3px solid var(--accent) !important;
+  border-radius: 4px !important;
+  padding: var(--space-sm) var(--space-md) !important;
+  color: var(--accent) !important;
+  font-weight: 500 !important;
+}
+
+/* ── Primary button ── */
+.run-btn {
+  margin-top: var(--space-md) !important;
+  margin-bottom: var(--space-sm) !important;
+}
+
+/* ── Responsive: stack on narrow screens ── */
+@media (max-width: 768px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .results-section {
+    padding: var(--space-md) !important;
+  }
+}
+@media (max-width: 480px) {
+  .kpi-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+"""
 
 _CONFIGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "configs"
 
@@ -133,38 +301,44 @@ def _build_rl_config(
     )
 
 
+def _kpi_html(label: str, value: str, detail: str, extra_cls: str = "") -> str:
+    """Return a styled KPI card as an HTML snippet."""
+    return (
+        f'<div class="kpi-card {extra_cls}">'
+        f'<div class="kpi-label">{label}</div>'
+        f'<div class="kpi-value">{value}</div>'
+        f'<div class="kpi-detail">{detail}</div>'
+        f"</div>"
+    )
+
+
 def create_app() -> gr.Blocks:
     """Build and return the Gradio Blocks application."""
     with gr.Blocks(
         title="rl-perf -- RL Training Performance Modeling",
+        theme=gr.themes.Soft(),
+        css=_CUSTOM_CSS,
     ) as app:
-        gr.Markdown("# rl-perf\nRL Training Performance Modeling")
+        gr.Markdown(
+            "# rl-perf\n\nRL Training Performance Modeling",
+            elem_id="app-header",
+        )
 
-        with gr.Row():
-            # ---- Left column: main content ----
-            with gr.Column(scale=7):
-                with gr.Tabs():
-                    mc = tab_model.build_tab()
-                    hc = tab_hardware.build_tab()
-                    rc = tab_rl.build_tab()
-                    sc = tab_search.build_tab()
+        with gr.Tabs():
+            mc = tab_model.build_tab()
+            hc = tab_hardware.build_tab()
+            rc = tab_rl.build_tab()
+            sc = tab_search.build_tab()
 
-                run_btn = gr.Button("Run Prediction", variant="primary", size="lg")
-                prediction_status = gr.Markdown("")
+        run_btn = gr.Button(
+            "Run Prediction",
+            variant="primary",
+            size="lg",
+            elem_classes=["run-btn"],
+        )
+        prediction_status = gr.HTML("", elem_classes=["prediction-status"])
 
-                res = results.build_results()
-
-            # ---- Right column: AI sidebar placeholder ----
-            with gr.Column(scale=3):
-                gr.Markdown("### AI Assistant")
-                gr.Chatbot(label="Chat", height=400)
-                gr.Textbox(
-                    placeholder="Ask about your configuration...",
-                    label="Message",
-                )
-                gr.Markdown(
-                    "*AI assistant coming soon.*",
-                )
+        res = results.build_results()
 
         # ======================================================
         # Wire: Run Prediction
@@ -369,27 +543,32 @@ def create_app() -> gr.Blocks:
                     time_budget_hours=None,
                 )
 
-                # Format KPI cards
+                # Format KPI cards as styled HTML
                 feasible_str = "FEASIBLE" if report.feasible else "NOT FEASIBLE"
-                kpi_epoch = (
-                    f"### Epoch Time\n\n"
-                    f"**{report.epoch_time_hours:.2f}** hours\n\n"
-                    f"*{feasible_str}*"
+                feasible_cls = "kpi-feasible" if report.feasible else "kpi-infeasible"
+                kpi_epoch = _kpi_html(
+                    "Epoch Time",
+                    f"{report.epoch_time_hours:.2f} h",
+                    feasible_str,
+                    feasible_cls,
                 )
-                kpi_gen = (
-                    f"### Gen TPS\n\n"
-                    f"**{report.gen_tps_target:,.0f}** tok/s\n\n"
-                    f"*{report.gen_time_hours:.2f}h*"
+                kpi_gen = _kpi_html(
+                    "Gen TPS",
+                    f"{report.gen_tps_target:,.0f} tok/s",
+                    f"{report.gen_time_hours:.2f}h",
+                    "kpi-neutral",
                 )
-                kpi_train = (
-                    f"### Train TPS\n\n"
-                    f"**{report.train_tps_target:,.0f}** tok/s\n\n"
-                    f"*{report.train_time_hours:.2f}h*"
+                kpi_train = _kpi_html(
+                    "Train TPS",
+                    f"{report.train_tps_target:,.0f} tok/s",
+                    f"{report.train_time_hours:.2f}h",
+                    "kpi-neutral",
                 )
-                kpi_bn = (
-                    f"### Bottleneck\n\n"
-                    f"**{report.bottleneck.title()}**\n\n"
-                    f"*slack: {report.bottleneck_slack:.1%}*"
+                kpi_bn = _kpi_html(
+                    "Bottleneck",
+                    report.bottleneck.title(),
+                    f"slack: {report.bottleneck_slack:.1%}",
+                    "kpi-neutral",
                 )
 
                 is_colocated = colocated == "Colocated"
@@ -397,6 +576,7 @@ def create_app() -> gr.Blocks:
                 memory_fig = build_memory_figure(report)
 
                 return (
+                    gr.update(visible=False),  # placeholder hidden
                     gr.update(visible=True),  # results_container
                     kpi_epoch,
                     kpi_gen,
@@ -408,20 +588,22 @@ def create_app() -> gr.Blocks:
                 )
             except Exception as e:
                 return (
+                    gr.update(visible=False),  # placeholder hidden
                     gr.update(visible=True),
-                    "### Epoch Time\n\n--",
-                    "### Gen TPS\n\n--",
-                    "### Train TPS\n\n--",
-                    "### Bottleneck\n\n--",
+                    _kpi_html("Epoch Time", "--", "", "kpi-neutral"),
+                    _kpi_html("Gen TPS", "--", "", "kpi-neutral"),
+                    _kpi_html("Train TPS", "--", "", "kpi-neutral"),
+                    _kpi_html("Bottleneck", "--", "", "kpi-neutral"),
                     gr.update(),
                     gr.update(),
-                    f"**Error:** {e}",
+                    f'<div class="prediction-error">Error: {html.escape(str(e))}</div>',
                 )
 
         run_btn.click(
             fn=_run_prediction,
             inputs=_all_prediction_inputs,
             outputs=[
+                res["results_placeholder"],
                 res["results_container"],
                 res["kpi_epoch"],
                 res["kpi_gen_tps"],
@@ -592,7 +774,7 @@ def create_app() -> gr.Blocks:
                         template="plotly_white", title="Sensitivity"
                     )
 
-                    status = f"**Pareto search complete.** {len(search_results)} configs evaluated."
+                    status = f"Pareto search complete. {len(search_results)} configs evaluated."
                     return pareto_fig, empty_sens, rows, status
 
                 else:  # Sensitivity Analysis
@@ -654,7 +836,7 @@ def create_app() -> gr.Blocks:
                         template="plotly_white", title="Pareto Frontier"
                     )
 
-                    status = f"**Sensitivity sweep complete.** {len(values)} values evaluated."
+                    status = f"Sensitivity sweep complete. {len(values)} values evaluated."
                     return empty_pareto, sens_fig, rows, status
 
             except Exception as e:
@@ -662,7 +844,7 @@ def create_app() -> gr.Blocks:
                 empty1.update_layout(template="plotly_white")
                 empty2 = _go.Figure()
                 empty2.update_layout(template="plotly_white")
-                return empty1, empty2, [], f"**Error:** {e}"
+                return empty1, empty2, [], f'<div class="prediction-error">Error: {html.escape(str(e))}</div>'
 
         sc["search_btn"].click(
             fn=_run_search,
@@ -685,5 +867,4 @@ def launch(host: str = "127.0.0.1", port: int = 7860, share: bool = False):
         server_name=host,
         server_port=port,
         share=share,
-        theme=gr.themes.Soft(),
     )
