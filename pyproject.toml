@@ -11,8 +11,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["gradio>=5.0", "plotly>=5.0", "huggingface-hub>=0.20"]
-dev = ["pytest", "pytest-xdist", "ruff", "gradio>=5.0", "plotly>=5.0", "huggingface-hub>=0.20"]
+gui = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "plotly>=5.0", "huggingface-hub>=0.20"]
+dev = ["pytest", "pytest-xdist", "ruff", "fastapi>=0.100", "uvicorn[standard]>=0.20", "plotly>=5.0", "huggingface-hub>=0.20"]
 
 [project.scripts]
 rl-perf = "rl_perf.cli:app"
