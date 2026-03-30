@@ -1,0 +1,49 @@
+name: "Qwen3-235B-MoE"
+description: "Qwen3 235B MoE (A22B) on 64x Ascend 910C — multi-node RL training with expert parallelism"
+model:
+  name: "Qwen3-235B-A22B"
+  hidden_size: 4096
+  vocab_size: 151936
+  num_layers: 94
+  dtype: bf16
+  layer:
+    attention: GQA
+    num_heads: 64
+    num_kv_heads: 4
+    head_dim: 128
+    ffn: MoE
+    num_experts: 128
+    num_shared_experts: 4
+    top_k: 8
+    expert_intermediate_size: 2048
+    shared_intermediate_size: 4096
+    intermediate_size: 4096
+    residual: standard
+hardware: "Ascend 910C"
+total_devices: 64
+parallelism:
+  tp: 4
+  pp: 2
+  ep: 4
+  cp: 1
+  cp_type: ring
+  sp: false
+  zero_stage: 0
+  pp_schedule: "1f1b"
+  recompute_attention: true
+  full_recomputation: false
+  optimizer_offload: false
+  activation_offload: false
+rl:
+  total_prompts: 10000
+  group_size: 8
+  avg_prompt_len: 512
+  avg_response_len: 2048
+  max_response_len: 4096
+  train_micro_batch_size: 2
+  gradient_accumulation_steps: 2
+  gen_batch_size: 32
+  colocated: false
+  reference_model: true
+  ref_offload_cpu: true
+  use_speculative_decoding: false

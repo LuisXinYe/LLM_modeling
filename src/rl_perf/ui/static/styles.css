@@ -814,3 +814,44 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* ── JSON Config Editor ──────────────────────────────── */
+.json-editor-toolbar {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  justify-content: flex-end;
+}
+
+.field-textarea.json-editor {
+  width: 100%;
+  min-height: 300px;
+  max-height: 500px;
+  padding: var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  resize: vertical;
+  tab-size: 2;
+  box-sizing: border-box;
+}
+
+.field-textarea.json-editor:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+.field-textarea.json-editor.json-error {
+  border-color: var(--status-error);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.1);
+}
+
+.field-textarea.json-editor.json-success {
+  border-color: var(--status-success);
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.1);
+}

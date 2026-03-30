@@ -8,6 +8,7 @@
 const state = {
   templates: {},
   hardware: {},
+  presets: {},
   lastResult: null,
   lastSearch: null,
   hasRun: false,
@@ -27,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initConditionalFields();
   initAutoComputed();
   initButtons();
+  initJsonEditor();
   await loadConfigs();
   initTemplateListener();
 });
@@ -302,26 +304,42 @@ function resetModified() {
 /* ── Config Loading ───────────────────────────────────── */
 async function loadConfigs() {
   try {
-    const [modelsResp, hwResp] = await Promise.all([
+    const [modelsResp, hwResp, presetsResp] = await Promise.all([
       fetch('/api/models'),
       fetch('/api/hardware'),
+      fetch('/api/presets'),
     ]);
     const modelsData = await modelsResp.json();
     const hwData = await hwResp.json();
+    const presetsData = await presetsResp.json();
 
     state.templates = modelsData.templates || {};
     state.hardware = hwData.profiles || {};
-
-    // Apply first template
-    const firstTemplate = Object.keys(state.templates)[0];
-    if (firstTemplate) {
-      applyModelTemplate(firstTemplate);
-    }
+    state.presets = presetsData.presets || {};
 
     // Apply first hardware
     const firstHW = Object.keys(state.hardware)[0];
     if (firstHW && state.hardware[firstHW]) {
       $('#devices-per-node').value = state.hardware[firstHW].devices_per_node;
+    }
+
+    // If presets available, apply the first preset and auto-run
+    const firstPreset = Object.keys(state.presets)[0];
+    if (firstPreset) {
+      const templateVal = $('#model-template').value;
+      if (state.presets[templateVal]) {
+        applyPreset(state.presets[templateVal]);
+      } else {
+        applyPreset(state.presets[firstPreset]);
+      }
+      // Auto-run prediction on load
+      await runAnalysis();
+    } else {
+      // Fallback: apply first model template
+      const firstTemplate = Object.keys(state.templates)[0];
+      if (firstTemplate) {
+        applyModelTemplate(firstTemplate);
+      }
     }
   } catch (e) {
     console.error('Failed to load configs:', e);
@@ -363,9 +381,16 @@ function applyModelTemplate(name) {
 }
 
 function initTemplateListener() {
-  $('#model-template').addEventListener('change', (e) => {
-    applyModelTemplate(e.target.value);
-    markModified('model');
+  $('#model-template').addEventListener('change', async (e) => {
+    const name = e.target.value;
+    // If a full preset exists for this template, apply it and auto-run
+    if (state.presets[name]) {
+      applyPreset(state.presets[name]);
+      await runAnalysis();
+    } else {
+      applyModelTemplate(name);
+      markModified('model');
+    }
   });
 }
 
@@ -627,6 +652,189 @@ function applyHFData(data) {
 
   updateConditionalFields();
   updateModelSummary();
+}
+
+/* ── Preset Application ──────────────────────────────── */
+function applyPreset(preset) {
+  // Apply model params
+  if (preset.model) {
+    const m = preset.model;
+    $('#model-name').value = m.name || '';
+    $('#hidden-size').value = m.hidden_size || 4096;
+    $('#vocab-size').value = m.vocab_size || 32000;
+    $('#num-layers').value = m.num_layers || 32;
+    $('#dtype').value = m.dtype || 'bf16';
+
+    if (m.layer) {
+      $('#attention-type').value = m.layer.attention || 'GQA';
+      $('#ffn-type').value = m.layer.ffn || 'SwiGLU';
+      $('#residual-type').value = m.layer.residual || 'standard';
+      $('#num-heads').value = m.layer.num_heads || 32;
+      $('#num-kv-heads').value = m.layer.num_kv_heads || 8;
+      $('#head-dim').value = m.layer.head_dim || 128;
+      $('#intermediate-size').value = m.layer.intermediate_size || 14336;
+      $('#num-experts').value = m.layer.num_experts || 1;
+      $('#top-k').value = m.layer.top_k || 1;
+      $('#shared-experts').value = m.layer.num_shared_experts || 0;
+      $('#expert-intermediate-size').value = m.layer.expert_intermediate_size || 0;
+      $('#shared-intermediate-size').value = m.layer.shared_intermediate_size || 0;
+      $('#kv-compression-dim').value = m.layer.kv_compression_dim || 0;
+      $('#query-compression-dim').value = m.layer.query_compression_dim || 0;
+      $('#rope-dim').value = m.layer.rope_dim || 0;
+      $('#window-size').value = m.layer.window_size || 0;
+      $('#mhc-expansion').value = m.layer.mhc_expansion || 4;
+    }
+  }
+
+  // Apply hardware
+  if (preset.hardware) {
+    $('#hw-profile').value = preset.hardware;
+    const prof = state.hardware[preset.hardware];
+    if (prof) {
+      $('#devices-per-node').value = prof.devices_per_node;
+    }
+  }
+  if (preset.total_devices) {
+    $('#total-devices').value = preset.total_devices;
+  }
+
+  // Apply parallelism
+  if (preset.parallelism) {
+    const p = preset.parallelism;
+    $('#par-tp').value = p.tp || 1;
+    $('#par-pp').value = p.pp || 1;
+    $('#par-ep').value = p.ep || 1;
+    $('#par-cp').value = p.cp || 1;
+    $('#cp-type').value = p.cp_type || 'ring';
+    $('#par-sp').checked = !!p.sp;
+    $('#zero-stage').value = p.zero_stage || 0;
+    $('#pp-schedule').value = p.pp_schedule || '1f1b';
+    $('#recompute-attn').checked = !!p.recompute_attention;
+    $('#full-recompute').checked = !!p.full_recomputation;
+    $('#opt-offload').checked = !!p.optimizer_offload;
+    $('#act-offload').checked = !!p.activation_offload;
+  }
+
+  // Apply RL config
+  if (preset.rl) {
+    const r = preset.rl;
+    $('#total-prompts').value = r.total_prompts || 10000;
+    $('#group-size').value = r.group_size || 8;
+    $('#total-responses').value = (r.total_prompts || 10000) * (r.group_size || 8);
+    $('#avg-prompt-len').value = r.avg_prompt_len || 512;
+    $('#avg-response-len').value = r.avg_response_len || 2048;
+    $('#max-response-len').value = r.max_response_len || 4096;
+    $('#std-response-len').value = r.std_response_len || '';
+    $('#train-mbs').value = r.train_micro_batch_size || 4;
+    $('#grad-accum').value = r.gradient_accumulation_steps || 1;
+    $('#gen-batch-size').value = r.gen_batch_size || 64;
+    $('#deploy-mode').value = r.colocated ? 'colocated' : 'separate';
+    $('#ref-model').checked = r.reference_model !== false;
+    $('#ref-offload').checked = !!r.ref_offload_cpu;
+    $('#spec-decode').checked = !!r.use_speculative_decoding;
+    if (r.mtp_acceptance_len) {
+      $('#mtp-acceptance-len').value = r.mtp_acceptance_len;
+    }
+    $('#mtp-fields').classList.toggle('hidden', !r.use_speculative_decoding);
+  }
+
+  // Recompute derived fields
+  recomputeDPFromPreset();
+  updateConditionalFields();
+  updateModelSummary();
+  updateHardwareSummary();
+  updateRLSummary();
+  resetModified();
+  refreshJsonEditor();
+}
+
+function recomputeDPFromPreset() {
+  const total = intVal('total-devices');
+  const tp = intVal('par-tp');
+  const pp = intVal('par-pp');
+  const ep = intVal('par-ep');
+  const divisor = tp * pp * ep;
+  const dp = divisor > 0 ? Math.floor(total / divisor) : total;
+  $('#par-dp').value = dp;
+
+  const perNode = intVal('devices-per-node');
+  const nodes = perNode > 0 ? Math.ceil(total / perNode) : 1;
+  $('#num-nodes').value = nodes;
+}
+
+function applyConfigToForm(config) {
+  // Wrapper: apply a full predict-request-shaped config object to form fields
+  if (config.model) {
+    // Reshape to preset format
+    const preset = {
+      model: config.model,
+      hardware: config.hardware,
+      total_devices: config.total_devices,
+      parallelism: config.parallelism,
+      rl: config.rl,
+    };
+    applyPreset(preset);
+  }
+}
+
+/* ── JSON Config Editor ──────────────────────────────── */
+function initJsonEditor() {
+  const refreshBtn = $('#json-refresh-btn');
+  const applyBtn = $('#json-apply-btn');
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      refreshJsonEditor();
+    });
+  }
+
+  if (applyBtn) {
+    applyBtn.addEventListener('click', async () => {
+      const textarea = $('#json-config-editor');
+      const status = $('#json-editor-status');
+      const raw = textarea.value.trim();
+
+      if (!raw) return;
+
+      try {
+        const config = JSON.parse(raw);
+        textarea.classList.remove('json-error');
+        textarea.classList.add('json-success');
+
+        applyConfigToForm(config);
+
+        status.classList.remove('hidden', 'error');
+        status.classList.add('success');
+        status.textContent = 'JSON applied to form fields.';
+
+        // Auto-run after applying JSON
+        await runAnalysis();
+
+        // Clear success state after a moment
+        setTimeout(() => {
+          textarea.classList.remove('json-success');
+          status.classList.add('hidden');
+        }, 2000);
+      } catch (e) {
+        textarea.classList.remove('json-success');
+        textarea.classList.add('json-error');
+        status.classList.remove('hidden', 'success');
+        status.classList.add('error');
+        status.textContent = `Invalid JSON: ${e.message}`;
+      }
+    });
+  }
+}
+
+function refreshJsonEditor() {
+  const textarea = $('#json-config-editor');
+  if (textarea) {
+    const config = buildPredictRequest();
+    textarea.value = JSON.stringify(config, null, 2);
+    textarea.classList.remove('json-error', 'json-success');
+    const status = $('#json-editor-status');
+    if (status) status.classList.add('hidden');
+  }
 }
 
 /* ── Loading / Error States ───────────────────────────── */

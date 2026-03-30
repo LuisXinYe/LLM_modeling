@@ -278,6 +278,23 @@ def _layer_to_dict(layer: LayerConfig) -> dict:
     }
 
 
+@app.get("/api/presets")
+def get_presets():
+    """Load all preset YAMLs from configs/presets/, return as dict keyed by name."""
+    import yaml
+
+    presets = {}
+    presets_dir = _CONFIGS_DIR / "presets"
+    if presets_dir.exists():
+        for yaml_file in sorted(presets_dir.glob("*.yaml")):
+            if yaml_file.name.startswith("_"):
+                continue
+            with open(yaml_file) as f:
+                data = yaml.safe_load(f)
+            presets[data.get("name", yaml_file.stem)] = data
+    return {"presets": presets}
+
+
 @app.get("/api/models")
 def get_models():
     templates = {}

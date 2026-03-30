@@ -523,6 +523,28 @@
           </div>
         </section>
 
+        <!-- JSON Config Editor -->
+        <section class="accordion-section" data-section="json-editor">
+          <button class="accordion-trigger" aria-expanded="false">
+            <span class="accordion-dot dot-default"></span>
+            <span class="accordion-title">Edit as JSON</span>
+            <span class="accordion-summary" id="json-editor-summary">Advanced config editor</span>
+            <svg class="accordion-chevron" width="16" height="16" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+          </button>
+          <div class="accordion-body">
+            <div class="accordion-content">
+              <div class="field">
+                <div class="json-editor-toolbar">
+                  <button class="btn btn-sm" id="json-refresh-btn" title="Refresh from form fields">Refresh</button>
+                  <button class="btn btn-sm btn-primary" id="json-apply-btn" title="Apply JSON to form fields">Apply JSON</button>
+                </div>
+                <textarea class="field-textarea json-editor" id="json-config-editor" rows="20" spellcheck="false"></textarea>
+                <div class="field-hint hidden" id="json-editor-status"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
       </div>
 
       <!-- Sticky run button -->

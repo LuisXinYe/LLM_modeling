@@ -1,0 +1,44 @@
+name: "Qwen2.5-72B"
+description: "Qwen2.5 72B on 32x Ascend 910C — multi-node RL training with TP=8"
+model:
+  name: "Qwen2.5-72B"
+  hidden_size: 8192
+  vocab_size: 152064
+  num_layers: 80
+  dtype: bf16
+  layer:
+    attention: GQA
+    num_heads: 64
+    num_kv_heads: 8
+    head_dim: 128
+    ffn: SwiGLU
+    intermediate_size: 29568
+    residual: standard
+hardware: "Ascend 910C"
+total_devices: 32
+parallelism:
+  tp: 8
+  pp: 1
+  ep: 1
+  cp: 1
+  cp_type: ring
+  sp: false
+  zero_stage: 0
+  pp_schedule: "1f1b"
+  recompute_attention: true
+  full_recomputation: false
+  optimizer_offload: false
+  activation_offload: false
+rl:
+  total_prompts: 10000
+  group_size: 8
+  avg_prompt_len: 512
+  avg_response_len: 2048
+  max_response_len: 4096
+  train_micro_batch_size: 2
+  gradient_accumulation_steps: 2
+  gen_batch_size: 32
+  colocated: false
+  reference_model: true
+  ref_offload_cpu: true
+  use_speculative_decoding: false

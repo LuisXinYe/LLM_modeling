@@ -1,0 +1,53 @@
+name: "DeepSeekV3-671B"
+description: "DeepSeek-V3 671B MoE on 128x Ascend 910C — large-scale RL training with MLA + MoE"
+model:
+  name: "DeepSeek-V3-671B"
+  hidden_size: 7168
+  vocab_size: 129280
+  num_layers: 61
+  dtype: bf16
+  layer:
+    attention: MLA
+    num_heads: 128
+    num_kv_heads: 128
+    head_dim: 128
+    kv_compression_dim: 512
+    query_compression_dim: 1536
+    rope_dim: 64
+    ffn: MoE
+    num_experts: 256
+    num_shared_experts: 1
+    top_k: 8
+    expert_intermediate_size: 2048
+    shared_intermediate_size: 18432
+    intermediate_size: 18432
+    residual: mHC
+    mhc_expansion: 4
+hardware: "Ascend 910C"
+total_devices: 128
+parallelism:
+  tp: 4
+  pp: 4
+  ep: 8
+  cp: 1
+  cp_type: ring
+  sp: false
+  zero_stage: 0
+  pp_schedule: "1f1b"
+  recompute_attention: true
+  full_recomputation: false
+  optimizer_offload: false
+  activation_offload: false
+rl:
+  total_prompts: 10000
+  group_size: 8
+  avg_prompt_len: 512
+  avg_response_len: 2048
+  max_response_len: 4096
+  train_micro_batch_size: 1
+  gradient_accumulation_steps: 4
+  gen_batch_size: 16
+  colocated: false
+  reference_model: true
+  ref_offload_cpu: true
+  use_speculative_decoding: false
