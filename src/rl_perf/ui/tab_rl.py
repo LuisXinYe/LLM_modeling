@@ -10,8 +10,8 @@ def build_tab() -> dict:
     components: dict = {}
 
     with gr.Tab("RL Training"):
-        with gr.Group():
-            gr.Markdown("### Data")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Data", elem_classes=["section-header"])
             with gr.Row():
                 total_prompts = gr.Number(
                     label="Total Prompts", value=10000, precision=0
@@ -48,8 +48,8 @@ def build_tab() -> dict:
             outputs=[total_responses],
         )
 
-        with gr.Group():
-            gr.Markdown("### Sequence Lengths")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Sequence Lengths", elem_classes=["section-header"])
             with gr.Row():
                 avg_prompt_len = gr.Number(
                     label="Avg Prompt Length", value=512, precision=0
@@ -71,8 +71,8 @@ def build_tab() -> dict:
                 )
                 components["std_response_len"] = std_response_len
 
-        with gr.Group():
-            gr.Markdown("### Batch Settings")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Batch Settings", elem_classes=["section-header"])
             with gr.Row():
                 train_micro_batch_size = gr.Number(
                     label="Train Micro Batch Size", value=4, precision=0
@@ -87,8 +87,8 @@ def build_tab() -> dict:
                 )
                 components["gen_batch_size"] = gen_batch_size
 
-        with gr.Group():
-            gr.Markdown("### Deployment")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Deployment", elem_classes=["section-header"])
             with gr.Row():
                 colocated = gr.Dropdown(
                     choices=["Colocated", "Separate"],

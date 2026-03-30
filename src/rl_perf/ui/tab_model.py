@@ -31,8 +31,8 @@ def build_tab() -> dict:
     components: dict = {}
 
     with gr.Tab("Model"):
-        with gr.Group():
-            gr.Markdown("### Model Source")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Model Source", elem_classes=["section-header"])
             source = gr.Dropdown(
                 choices=["Template", "HuggingFace", "Custom"],
                 value="Template",
@@ -74,8 +74,8 @@ def build_tab() -> dict:
             outputs=[hf_id, template],
         )
 
-        with gr.Group():
-            gr.Markdown("### Model Architecture")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Model Architecture", elem_classes=["section-header"])
             with gr.Row():
                 name = gr.Textbox(label="Model Name", value="Llama-3.1-8B")
                 components["name"] = name
@@ -89,8 +89,8 @@ def build_tab() -> dict:
                 dtype = gr.Dropdown(choices=_DTYPE_OPTIONS, value="bf16", label="Dtype")
                 components["dtype"] = dtype
 
-        with gr.Group():
-            gr.Markdown("### Layer Configuration")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Layer Configuration", elem_classes=["section-header"])
             with gr.Row():
                 attention = gr.Dropdown(
                     choices=_ATTENTION_TYPES, value="GQA", label="Attention"

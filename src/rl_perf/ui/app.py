@@ -7,6 +7,7 @@ from pathlib import Path
 
 import gradio as gr
 
+from rl_perf.ui._theme import empty_figure, kpi_html
 from rl_perf.config import (
     HardwareConfig,
     LayerConfig,
@@ -40,13 +41,36 @@ _CUSTOM_CSS = """
   --space-lg: 24px;
   --space-xl: 32px;
   --space-2xl: 48px;
-  --accent: #CF0A2C;
-  --accent-light: rgba(207, 10, 44, 0.08);
+
+  /* Surfaces */
+  --bg-page: #FAF8F6;
+  --bg-card: #FFFFFF;
+  --bg-hover: #F5F0EB;
   --surface: #FAFAF9;
   --surface-alt: #F5F4F2;
   --border-subtle: #E8E5E0;
+
+  /* Text */
   --text-primary: #1A1A1A;
   --text-secondary: #6B7280;
+  --text-tertiary: #9ca3af;
+
+  /* Brand */
+  --accent: #CF0A2C;
+  --accent-hover: #A80823;
+  --accent-light: #FDE8EB;
+
+  /* Semantic (data) */
+  --status-success: #16a34a;
+  --status-error: #dc2626;
+  --status-warning: #f59e0b;
+  --data-purple: #7c3aed;
+  --data-blue: #2563eb;
+  --data-cyan: #06b6d4;
+  --data-orange: #ea580c;
+
+  /* Chart */
+  --chart-bg: #FAFAF8;
 
   /* Type scale */
   --text-xs: 0.75rem;
@@ -73,37 +97,39 @@ _CUSTOM_CSS = """
   font-family: var(--font-sans) !important;
   font-size: var(--text-base) !important;
   line-height: 1.5 !important;
+  background-color: var(--bg-page) !important;
   color: var(--text-primary) !important;
 }
 
 /* ── Header branding ── */
 #app-header {
-  background: linear-gradient(135deg, var(--surface) 0%, #FFF 100%);
+  background: linear-gradient(135deg, var(--bg-card) 0%, var(--accent-light) 60%, var(--bg-card) 100%);
   border-bottom: 3px solid var(--accent);
-  padding: var(--space-lg) var(--space-xl) var(--space-md) !important;
+  padding: var(--space-xl) var(--space-xl) var(--space-lg) !important;
   margin-bottom: var(--space-lg) !important;
 }
 #app-header h1 {
   font-family: var(--font-sans) !important;
-  font-size: var(--text-2xl) !important;
+  font-size: var(--text-3xl) !important;
   font-weight: var(--weight-bold) !important;
-  color: var(--text-primary) !important;
-  letter-spacing: -0.02em;
+  color: var(--accent) !important;
+  letter-spacing: -0.03em;
   line-height: 1.2 !important;
   margin: 0 !important;
 }
 #app-header p {
   font-family: var(--font-sans) !important;
   color: var(--text-secondary) !important;
-  font-size: var(--text-sm) !important;
+  font-size: var(--text-base) !important;
   font-weight: var(--weight-normal) !important;
+  letter-spacing: 0.01em !important;
   line-height: 1.5 !important;
   margin: var(--space-xs) 0 0 0 !important;
 }
 
 /* ── Section groups ── */
 .section-group {
-  background: var(--surface) !important;
+  background: var(--bg-card) !important;
   border: 1px solid var(--border-subtle) !important;
   border-radius: 8px !important;
   padding: var(--space-lg) !important;
@@ -138,7 +164,7 @@ _CUSTOM_CSS = """
 }
 
 .kpi-card {
-  background: #FFF !important;
+  background: var(--bg-card) !important;
   border: 1px solid var(--border-subtle) !important;
   border-radius: 8px !important;
   padding: var(--space-lg) var(--space-md) !important;
@@ -177,13 +203,13 @@ _CUSTOM_CSS = """
   margin-top: var(--space-xs);
 }
 .kpi-card.kpi-feasible {
-  border-top: 3px solid #16A34A;
+  border-top: 3px solid var(--status-success);
 }
 .kpi-card.kpi-infeasible {
-  border-top: 3px solid var(--accent);
+  border-top: 3px solid var(--status-error);
 }
 .kpi-card.kpi-neutral {
-  border-top: 3px solid #D4A843;
+  border-top: 3px solid var(--status-warning);
 }
 
 /* ── Results area ── */
@@ -209,11 +235,11 @@ _CUSTOM_CSS = """
 
 /* ── Error styling ── */
 .prediction-error {
-  background: rgba(207, 10, 44, 0.06) !important;
-  border-left: 3px solid var(--accent) !important;
+  background: rgba(220, 38, 38, 0.06) !important;
+  border-left: 3px solid var(--status-error) !important;
   border-radius: 4px !important;
   padding: var(--space-sm) var(--space-md) !important;
-  color: var(--accent) !important;
+  color: var(--status-error) !important;
   font-weight: var(--weight-medium) !important;
 }
 
@@ -240,10 +266,138 @@ _CUSTOM_CSS = """
   letter-spacing: 0.02em !important;
 }
 
-/* ── Primary button ── */
+/* ── Primary button (Run Prediction) ── */
 .run-btn {
   margin-top: var(--space-md) !important;
   margin-bottom: var(--space-sm) !important;
+}
+.run-btn.primary {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #FAFAFA !important;
+}
+.run-btn.primary:hover {
+  background: var(--accent-hover) !important;
+  border-color: var(--accent-hover) !important;
+}
+
+/* ── Secondary buttons (Load Model, Run Search) ── */
+.gradio-container button.secondary {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-subtle) !important;
+  color: var(--text-primary) !important;
+}
+.gradio-container button.secondary:hover {
+  background: var(--bg-hover) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+/* ── Tab navigation: active indicator ── */
+.gradio-container .tab-nav button {
+  transition: color 0.2s ease-out, border-color 0.2s ease-out,
+              background-color 0.2s ease-out !important;
+  border-bottom: 2px solid transparent !important;
+  padding-bottom: var(--space-sm) !important;
+}
+.gradio-container .tab-nav button.selected {
+  color: var(--accent) !important;
+  border-bottom: 2px solid var(--accent) !important;
+}
+.gradio-container .tab-nav button:hover:not(.selected) {
+  color: var(--accent-hover) !important;
+  border-bottom: 2px solid var(--accent-light) !important;
+}
+
+/* ── Input focus states ── */
+.gradio-container input:focus,
+.gradio-container select:focus,
+.gradio-container textarea:focus {
+  outline: none !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-light) !important;
+  transition: border-color 0.15s ease-out, box-shadow 0.15s ease-out !important;
+}
+.gradio-container input,
+.gradio-container select,
+.gradio-container textarea {
+  transition: border-color 0.15s ease-out, box-shadow 0.15s ease-out !important;
+}
+
+/* ── Button transitions ── */
+.run-btn.primary {
+  transition: background-color 0.2s ease-out, border-color 0.2s ease-out,
+              box-shadow 0.2s ease-out !important;
+}
+.run-btn.primary:active {
+  transform: translateY(1px);
+  box-shadow: none !important;
+}
+.gradio-container button.secondary {
+  transition: background-color 0.2s ease-out, border-color 0.2s ease-out,
+              color 0.2s ease-out !important;
+}
+
+/* ── Section group subtle hover ── */
+.section-group {
+  transition: box-shadow 0.2s ease-out !important;
+}
+.section-group:hover {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* ── Results fade-in animation ── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.results-section {
+  animation: fadeInUp 0.35s ease-out !important;
+  border-top: 2px solid var(--border-subtle) !important;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.03) !important;
+}
+
+/* ── KPI cards: equal height ── */
+.kpi-grid {
+  align-items: stretch !important;
+}
+.kpi-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+}
+/* Truncate long model names */
+.kpi-card .kpi-value {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  max-width: 100% !important;
+}
+
+/* ── Error styling: distinct and contained ── */
+.prediction-error {
+  max-height: 120px !important;
+  overflow-y: auto !important;
+  word-break: break-word !important;
+}
+
+/* ── Form polish ── */
+.gradio-container label,
+.gradio-container .label-wrap span {
+  color: var(--text-secondary) !important;
+}
+.gradio-container .checkbox-label,
+.gradio-container input[type="checkbox"] {
+  margin-right: var(--space-sm) !important;
+}
+.gradio-container input[type="number"] {
+  min-width: 80px !important;
 }
 
 /* ── Responsive: stack on narrow screens ── */
@@ -371,17 +525,6 @@ def _build_rl_config(
     )
 
 
-def _kpi_html(label: str, value: str, detail: str, extra_cls: str = "") -> str:
-    """Return a styled KPI card as an HTML snippet."""
-    return (
-        f'<div class="kpi-card {extra_cls}">'
-        f'<div class="kpi-label">{label}</div>'
-        f'<div class="kpi-value">{value}</div>'
-        f'<div class="kpi-detail">{detail}</div>'
-        f"</div>"
-    )
-
-
 def create_app() -> gr.Blocks:
     """Build and return the Gradio Blocks application."""
     with gr.Blocks(
@@ -406,7 +549,7 @@ def create_app() -> gr.Blocks:
             size="lg",
             elem_classes=["run-btn"],
         )
-        prediction_status = gr.HTML("", elem_classes=["prediction-status"])
+        prediction_status = gr.HTML("")
 
         res = results.build_results()
 
@@ -616,25 +759,25 @@ def create_app() -> gr.Blocks:
                 # Format KPI cards as styled HTML
                 feasible_str = "FEASIBLE" if report.feasible else "NOT FEASIBLE"
                 feasible_cls = "kpi-feasible" if report.feasible else "kpi-infeasible"
-                kpi_epoch = _kpi_html(
+                kpi_epoch = kpi_html(
                     "Epoch Time",
                     f"{report.epoch_time_hours:.2f} h",
                     feasible_str,
                     feasible_cls,
                 )
-                kpi_gen = _kpi_html(
+                kpi_gen = kpi_html(
                     "Gen TPS",
                     f"{report.gen_tps_target:,.0f} tok/s",
                     f"{report.gen_time_hours:.2f}h",
                     "kpi-neutral",
                 )
-                kpi_train = _kpi_html(
+                kpi_train = kpi_html(
                     "Train TPS",
                     f"{report.train_tps_target:,.0f} tok/s",
                     f"{report.train_time_hours:.2f}h",
                     "kpi-neutral",
                 )
-                kpi_bn = _kpi_html(
+                kpi_bn = kpi_html(
                     "Bottleneck",
                     report.bottleneck.title(),
                     f"slack: {report.bottleneck_slack:.1%}",
@@ -660,10 +803,10 @@ def create_app() -> gr.Blocks:
                 return (
                     gr.update(visible=False),  # placeholder hidden
                     gr.update(visible=True),
-                    _kpi_html("Epoch Time", "--", "", "kpi-neutral"),
-                    _kpi_html("Gen TPS", "--", "", "kpi-neutral"),
-                    _kpi_html("Train TPS", "--", "", "kpi-neutral"),
-                    _kpi_html("Bottleneck", "--", "", "kpi-neutral"),
+                    kpi_html("Epoch Time", "--", "", "kpi-neutral"),
+                    kpi_html("Gen TPS", "--", "", "kpi-neutral"),
+                    kpi_html("Train TPS", "--", "", "kpi-neutral"),
+                    kpi_html("Bottleneck", "--", "", "kpi-neutral"),
                     gr.update(),
                     gr.update(),
                     f'<div class="prediction-error">Error: {html.escape(str(e))}</div>',
@@ -764,8 +907,6 @@ def create_app() -> gr.Blocks:
             sweep_param,
             sweep_values_str,
         ):
-            import plotly.graph_objects as _go
-
             try:
                 model_cfg = _build_model_config(
                     m_name,
@@ -839,13 +980,8 @@ def create_app() -> gr.Blocks:
                             ]
                         )
 
-                    empty_sens = _go.Figure()
-                    empty_sens.update_layout(
-                        template="plotly_white", title="Sensitivity"
-                    )
-
                     status = f"Pareto search complete. {len(search_results)} configs evaluated."
-                    return pareto_fig, empty_sens, rows, status
+                    return pareto_fig, empty_figure("Sensitivity"), rows, status
 
                 else:  # Sensitivity Analysis
                     values = [
@@ -901,24 +1037,15 @@ def create_app() -> gr.Blocks:
                             ]
                         )
 
-                    empty_pareto = _go.Figure()
-                    empty_pareto.update_layout(
-                        template="plotly_white", title="Pareto Frontier"
-                    )
-
                     status = (
                         f"Sensitivity sweep complete. {len(values)} values evaluated."
                     )
-                    return empty_pareto, sens_fig, rows, status
+                    return empty_figure("Pareto Frontier"), sens_fig, rows, status
 
             except Exception as e:
-                empty1 = _go.Figure()
-                empty1.update_layout(template="plotly_white")
-                empty2 = _go.Figure()
-                empty2.update_layout(template="plotly_white")
                 return (
-                    empty1,
-                    empty2,
+                    empty_figure(),
+                    empty_figure(),
                     [],
                     f'<div class="prediction-error">Error: {html.escape(str(e))}</div>',
                 )

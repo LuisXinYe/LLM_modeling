@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import gradio as gr
-import plotly.graph_objects as go
+
+from rl_perf.ui._theme import empty_figure
 
 
 _OPTIMIZATION_TARGETS = ["epoch_time_hours", "gen_tps_target", "train_tps_target"]
@@ -17,12 +18,6 @@ _SWEEP_PARAMS = [
     "gen_batch_size",
     "gradient_accumulation_steps",
 ]
-
-
-def _empty_figure(title: str = "") -> go.Figure:
-    fig = go.Figure()
-    fig.update_layout(template="plotly_white", title=title)
-    return fig
 
 
 def build_tab() -> dict:
@@ -88,11 +83,11 @@ def build_tab() -> dict:
 
         with gr.Row():
             pareto_plot = gr.Plot(
-                value=_empty_figure("Pareto Frontier"), label="Pareto Plot"
+                value=empty_figure("Pareto Frontier"), label="Pareto Plot"
             )
             components["pareto_plot"] = pareto_plot
             sens_plot = gr.Plot(
-                value=_empty_figure("Sensitivity"), label="Sensitivity Plot"
+                value=empty_figure("Sensitivity"), label="Sensitivity Plot"
             )
             components["sens_plot"] = sens_plot
 

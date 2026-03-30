@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import gradio as gr
-import plotly.graph_objects as go
 
 from rl_perf.config import ParallelismConfig, load_hardware_config
+from rl_perf.ui._theme import empty_figure
 from rl_perf.ui.topology import build_logical_mesh_figure
 
 _CONFIGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "configs"
@@ -22,23 +22,13 @@ _PP_SCHEDULES = ["1f1b", "interleaved"]
 _CP_TYPES = ["ring", "ulysses"]
 
 
-def _empty_figure() -> go.Figure:
-    fig = go.Figure()
-    fig.update_layout(
-        template="plotly_white",
-        margin=dict(l=20, r=20, t=30, b=20),
-        title="Topology Preview",
-    )
-    return fig
-
-
 def build_tab() -> dict:
     """Build the Hardware & Parallelism tab and return a dict of component handles."""
     components: dict = {}
 
     with gr.Tab("Hardware & Parallelism"):
-        with gr.Group():
-            gr.Markdown("### Hardware")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Hardware", elem_classes=["section-header"])
             hw_dropdown = gr.Dropdown(
                 choices=list(_HW_TEMPLATES.keys()),
                 value="Ascend 910C",
@@ -87,8 +77,8 @@ def build_tab() -> dict:
             outputs=[num_nodes],
         )
 
-        with gr.Group():
-            gr.Markdown("### 6D Parallelism")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### 6D Parallelism", elem_classes=["section-header"])
             with gr.Row():
                 tp = gr.Number(label="TP", value=1, precision=0)
                 components["tp"] = tp
@@ -137,8 +127,8 @@ def build_tab() -> dict:
                 outputs=[dp],
             )
 
-        with gr.Group():
-            gr.Markdown("### Memory Optimizations")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Memory Optimizations", elem_classes=["section-header"])
             with gr.Row():
                 recompute_attention = gr.Checkbox(
                     label="Recompute Attention", value=False
@@ -158,9 +148,11 @@ def build_tab() -> dict:
                 )
                 components["activation_offload"] = activation_offload
 
-        with gr.Group():
-            gr.Markdown("### Topology Preview")
-            topo_plot = gr.Plot(value=_empty_figure(), label="Logical Mesh")
+        with gr.Group(elem_classes=["section-group"]):
+            gr.Markdown("### Topology Preview", elem_classes=["section-header"])
+            topo_plot = gr.Plot(
+                value=empty_figure("Topology Preview"), label="Logical Mesh"
+            )
             components["topo_plot"] = topo_plot
             validation_msg = gr.Markdown("")
             components["validation_msg"] = validation_msg
@@ -178,7 +170,9 @@ def build_tab() -> dict:
 
                 stem = _HW_TEMPLATES.get(hw_name)
                 if not stem:
-                    return _empty_figure(), "**Warning:** Unknown hardware profile"
+                    return empty_figure(
+                        "Topology Preview"
+                    ), "**Warning:** Unknown hardware profile"
                 hw = load_hardware_config(
                     str(_CONFIGS_DIR / "hardware" / f"{stem}.yaml")
                 )
@@ -192,7 +186,7 @@ def build_tab() -> dict:
                 fig = build_logical_mesh_figure(par, hw, num_layers=num_layers_val)
                 return fig, msg
             except Exception as e:
-                return _empty_figure(), f"**Error:** {e}"
+                return empty_figure("Topology Preview"), f"**Error:** {e}"
 
         components["update_topology"] = _update_topology
 

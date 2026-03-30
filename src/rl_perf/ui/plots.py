@@ -13,21 +13,42 @@ import plotly.graph_objects as go
 
 from rl_perf.report import TargetReport
 from rl_perf.search import SearchResult
+from rl_perf.ui._theme import (
+    CHART_BG as _CHART_BG,
+    GRID_COLOR as _GRID_COLOR,
+    HOVERLABEL as _HOVERLABEL,
+    PLOTLY_FONT as _PLOTLY_FONT,
+    PLOTLY_TITLE_FONT as _PLOTLY_TITLE_FONT,
+)
 
 # ---------------------------------------------------------------------------
 # Brand colours
 # ---------------------------------------------------------------------------
-_PURPLE = "#7c3aed"
-_ORANGE = "#ea580c"
-_GREEN = "#16a34a"
-_RED = "#dc2626"
-_GRAY = "#9ca3af"
-_AMBER = "#f59e0b"
-_CYAN = "#06b6d4"
-_LIGHT_PURPLE = "#c4b5fd"
+_PURPLE = "#7c3aed"  # compute/generation (--data-purple)
+_ORANGE = "#ea580c"  # training phase (--data-orange)
+_GREEN = "#16a34a"  # feasible (--status-success)
+_RED = "#dc2626"  # OOM/infeasible (--status-error)
+_GRAY = "#6b7280"  # non-pareto feasible (darkened for contrast)
+_AMBER = "#f59e0b"  # budget line (--status-warning)
+_CYAN = "#06b6d4"  # ref model (--data-cyan)
+_LIGHT_PURPLE = "#c4b5fd"  # optimizer
 
-# Common Plotly font setting for consistent typography
-_PLOTLY_FONT = dict(family="DM Sans, system-ui, sans-serif", size=13)
+
+def _apply_chart_polish(fig: go.Figure) -> None:
+    """Apply consistent polish: gridlines, hover style, axis cleanup."""
+    fig.update_xaxes(
+        gridcolor=_GRID_COLOR,
+        gridwidth=1,
+        zeroline=False,
+        showline=False,
+    )
+    fig.update_yaxes(
+        gridcolor=_GRID_COLOR,
+        gridwidth=1,
+        zeroline=False,
+        showline=False,
+    )
+    fig.update_layout(hoverlabel=_HOVERLABEL)
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +122,15 @@ def build_timeline_figure(report: TargetReport, colocated: bool) -> go.Figure:
     fig.update_layout(
         template="plotly_white",
         font=_PLOTLY_FONT,
+        plot_bgcolor=_CHART_BG,
+        paper_bgcolor=_CHART_BG,
         barmode=barmode,
-        title="Epoch Timeline",
+        title=dict(text="Epoch Timeline", font=_PLOTLY_TITLE_FONT),
         xaxis_title="Time (hours)",
         margin=dict(l=80, r=40, t=60, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+    _apply_chart_polish(fig)
     return fig
 
 
@@ -187,12 +211,15 @@ def build_memory_figure(report: TargetReport) -> go.Figure:
     fig.update_layout(
         template="plotly_white",
         font=_PLOTLY_FONT,
+        plot_bgcolor=_CHART_BG,
+        paper_bgcolor=_CHART_BG,
         barmode="stack",
-        title="Per-Device Memory Breakdown",
+        title=dict(text="Per-Device Memory Breakdown", font=_PLOTLY_TITLE_FONT),
         yaxis_title="Memory (GB)",
         margin=dict(l=60, r=40, t=60, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+    _apply_chart_polish(fig)
     return fig
 
 
@@ -301,12 +328,17 @@ def build_pareto_figure(
     fig.update_layout(
         template="plotly_white",
         font=_PLOTLY_FONT,
-        title="Pareto Frontier: Devices vs Epoch Time",
+        plot_bgcolor=_CHART_BG,
+        paper_bgcolor=_CHART_BG,
+        title=dict(
+            text="Pareto Frontier: Devices vs Epoch Time", font=_PLOTLY_TITLE_FONT
+        ),
         xaxis_title="Number of Devices",
         yaxis_title="Epoch Time (hours)",
         margin=dict(l=60, r=40, t=60, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+    _apply_chart_polish(fig)
     return fig
 
 
@@ -382,10 +414,13 @@ def build_sensitivity_figure(
     fig.update_layout(
         template="plotly_white",
         font=_PLOTLY_FONT,
-        title=f"Sensitivity: {param_name}",
+        plot_bgcolor=_CHART_BG,
+        paper_bgcolor=_CHART_BG,
+        title=dict(text=f"Sensitivity: {param_name}", font=_PLOTLY_TITLE_FONT),
         xaxis_title=param_name,
         yaxis_title="Epoch Time (hours)",
         margin=dict(l=60, r=40, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+    _apply_chart_polish(fig)
     return fig

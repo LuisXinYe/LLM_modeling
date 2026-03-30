@@ -12,33 +12,37 @@ from typing import List
 import plotly.graph_objects as go
 
 from rl_perf.config import HardwareConfig, ParallelismConfig
+from rl_perf.ui._theme import (
+    CHART_BG as _CHART_BG,
+    HOVERLABEL as _HOVERLABEL,
+    PLOTLY_FONT as _PLOTLY_FONT,
+    PLOTLY_TITLE_FONT as _PLOTLY_TITLE_FONT,
+)
 
 # ---------------------------------------------------------------------------
 # Colour palettes
 # ---------------------------------------------------------------------------
 
 # One colour per PP stage (cycles if pp > len)
+# Aligned with design tokens: purple, blue, cyan, green, orange, red, amber, gray
 _PP_STAGE_COLORS = [
-    "#7c3aed",
-    "#2563eb",
-    "#0891b2",
-    "#16a34a",
-    "#ea580c",
-    "#dc2626",
-    "#ca8a04",
-    "#6b7280",
+    "#7c3aed",  # --data-purple
+    "#2563eb",  # --data-blue
+    "#06b6d4",  # --data-cyan
+    "#16a34a",  # --status-success
+    "#ea580c",  # --data-orange
+    "#dc2626",  # --status-error
+    "#f59e0b",  # --status-warning
+    "#6b7280",  # --text-secondary
 ]
 
 # One border colour per EP group (cycles if ep > len)
 _EP_BORDER_COLORS = [
-    "#16a34a",
-    "#ea580c",
-    "#0891b2",
-    "#ca8a04",
+    "#16a34a",  # --status-success
+    "#ea580c",  # --data-orange
+    "#06b6d4",  # --data-cyan
+    "#f59e0b",  # --status-warning
 ]
-
-# Common Plotly font setting for consistent typography
-_PLOTLY_FONT = dict(family="DM Sans, system-ui, sans-serif", size=13)
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +216,7 @@ def build_logical_mesh_figure(
                         opacity=opacity,
                         marker=dict(
                             symbol="square",
-                            size=30,
+                            size=34,
                             color=fill_color,
                             line=marker_line,
                         ),
@@ -220,22 +224,36 @@ def build_logical_mesh_figure(
                     )
                 )
 
+    _grid_color = "rgba(0, 0, 0, 0.06)"
     fig.update_layout(
         template="plotly_white",
         font=_PLOTLY_FONT,
+        plot_bgcolor=_CHART_BG,
+        paper_bgcolor=_CHART_BG,
+        title=dict(
+            text="Device Logical Mesh",
+            font=_PLOTLY_TITLE_FONT,
+        ),
         xaxis=dict(
-            title="TP rank (within EP group)",
+            title="TP rank",
             tickmode="linear",
             dtick=1,
+            gridcolor=_grid_color,
+            zeroline=False,
+            showline=False,
         ),
         yaxis=dict(
             title="PP stage",
             autorange="reversed",
             tickmode="linear",
             dtick=1,
+            gridcolor=_grid_color,
+            zeroline=False,
+            showline=False,
         ),
-        margin=dict(l=60, r=20, t=40, b=60),
+        margin=dict(l=60, r=20, t=50, b=50),
         legend=dict(title="Group"),
+        hoverlabel=_HOVERLABEL,
     )
 
     return fig
