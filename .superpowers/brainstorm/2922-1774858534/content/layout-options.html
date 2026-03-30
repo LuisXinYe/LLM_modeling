@@ -1,0 +1,173 @@
+<h2>Page Layout: How should the tool be organized?</h2>
+<p class="subtitle">The current UI uses tabs for config + separate results below. Let's rethink this.</p>
+
+<div class="cards">
+  <!-- Option A: Single-page dashboard -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 1.5rem; background: #FAF8F6;">
+      <div style="display: grid; grid-template-columns: 320px 1fr; gap: 1px; background: #e5e5e5; border-radius: 8px; overflow: hidden; height: 280px;">
+        <!-- Left: Config panel -->
+        <div style="background: #fff; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: #CF0A2C; text-transform: uppercase;">Configuration</div>
+          <div style="background: #f5f3f0; border-radius: 6px; padding: 8px 10px; font-size: 11px; color: #666;">Model: Llama-3.1-8B</div>
+          <div style="background: #f5f3f0; border-radius: 6px; padding: 8px 10px; font-size: 11px; color: #666;">Hardware: Ascend 910C &times; 8</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+            <div style="background: #f5f3f0; border-radius: 6px; padding: 8px 10px; font-size: 10px; color: #666;">TP: 1</div>
+            <div style="background: #f5f3f0; border-radius: 6px; padding: 8px 10px; font-size: 10px; color: #666;">PP: 1</div>
+          </div>
+          <div style="background: #f5f3f0; border-radius: 6px; padding: 8px 10px; font-size: 11px; color: #666;">RL: 10k prompts &times; 8</div>
+          <div style="margin-top: auto; background: #CF0A2C; color: white; border-radius: 6px; padding: 8px; text-align: center; font-size: 12px; font-weight: 600;">Run Analysis</div>
+        </div>
+        <!-- Right: Results -->
+        <div style="background: #FAFAF8; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+            <div style="background: #fff; border-radius: 6px; padding: 8px; border-top: 2px solid #dc2626;">
+              <div style="font-size: 8px; text-transform: uppercase; color: #999; letter-spacing: 0.05em;">Epoch</div>
+              <div style="font-size: 16px; font-weight: 700; color: #1a1a1a;">1.38h</div>
+            </div>
+            <div style="background: #fff; border-radius: 6px; padding: 8px; border-top: 2px solid #16a34a;">
+              <div style="font-size: 8px; text-transform: uppercase; color: #999; letter-spacing: 0.05em;">Gen TPS</div>
+              <div style="font-size: 16px; font-weight: 700; color: #1a1a1a;">38.7k</div>
+            </div>
+            <div style="background: #fff; border-radius: 6px; padding: 8px; border-top: 2px solid #16a34a;">
+              <div style="font-size: 8px; text-transform: uppercase; color: #999; letter-spacing: 0.05em;">Train TPS</div>
+              <div style="font-size: 16px; font-weight: 700; color: #1a1a1a;">41.6k</div>
+            </div>
+            <div style="background: #fff; border-radius: 6px; padding: 8px; border-top: 2px solid #f59e0b;">
+              <div style="font-size: 8px; text-transform: uppercase; color: #999; letter-spacing: 0.05em;">Bottleneck</div>
+              <div style="font-size: 14px; font-weight: 700; color: #1a1a1a;">Training</div>
+            </div>
+          </div>
+          <div style="flex: 1; background: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 11px;">Timeline Chart</div>
+          <div style="height: 60px; background: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 11px;">Memory Chart</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Side-by-Side (Config | Results)</h3>
+      <p>Left panel = all config (scrollable, collapsible sections). Right = live results + charts. Everything visible at once. Like Bloomberg Terminal / Grafana.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Wizard flow -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 1.5rem; background: #FAF8F6;">
+      <div style="height: 280px; background: #fff; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;">
+        <!-- Step indicator -->
+        <div style="display: flex; align-items: center; gap: 0; padding: 16px 20px; border-bottom: 1px solid #eee;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="width: 24px; height: 24px; border-radius: 50%; background: #CF0A2C; color: white; font-size: 11px; display: flex; align-items: center; justify-content: center; font-weight: 700;">1</div>
+            <span style="font-size: 11px; font-weight: 600; color: #CF0A2C;">Model</span>
+          </div>
+          <div style="flex: 1; height: 1px; background: #e5e5e5; margin: 0 8px;"></div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="width: 24px; height: 24px; border-radius: 50%; background: #e5e5e5; color: #999; font-size: 11px; display: flex; align-items: center; justify-content: center;">2</div>
+            <span style="font-size: 11px; color: #999;">Hardware</span>
+          </div>
+          <div style="flex: 1; height: 1px; background: #e5e5e5; margin: 0 8px;"></div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="width: 24px; height: 24px; border-radius: 50%; background: #e5e5e5; color: #999; font-size: 11px; display: flex; align-items: center; justify-content: center;">3</div>
+            <span style="font-size: 11px; color: #999;">Training</span>
+          </div>
+          <div style="flex: 1; height: 1px; background: #e5e5e5; margin: 0 8px;"></div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="width: 24px; height: 24px; border-radius: 50%; background: #e5e5e5; color: #999; font-size: 11px; display: flex; align-items: center; justify-content: center;">4</div>
+            <span style="font-size: 11px; color: #999;">Results</span>
+          </div>
+        </div>
+        <!-- Content -->
+        <div style="flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="font-size: 18px; font-weight: 700; color: #1a1a1a;">Select Model</div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+            <div style="border: 2px solid #CF0A2C; border-radius: 8px; padding: 12px; text-align: center;">
+              <div style="font-size: 12px; font-weight: 600;">Llama 3.1 8B</div>
+              <div style="font-size: 10px; color: #999;">GQA + SwiGLU</div>
+            </div>
+            <div style="border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px; text-align: center;">
+              <div style="font-size: 12px; font-weight: 600;">Qwen2.5 72B</div>
+              <div style="font-size: 10px; color: #999;">GQA + SwiGLU</div>
+            </div>
+            <div style="border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px; text-align: center;">
+              <div style="font-size: 12px; font-weight: 600;">DeepSeek V3</div>
+              <div style="font-size: 10px; color: #999;">MLA + MoE</div>
+            </div>
+          </div>
+          <div style="margin-top: auto; display: flex; justify-content: flex-end;">
+            <div style="background: #CF0A2C; color: white; border-radius: 6px; padding: 8px 24px; font-size: 12px; font-weight: 600;">Next &rarr;</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Wizard Flow (Step 1 → 2 → 3 → Results)</h3>
+      <p>Guided step-by-step: Model → Hardware → Training → Results. Focused, one thing at a time. Good for first-time users. But slower for experts who want to tweak one param.</p>
+    </div>
+  </div>
+
+  <!-- Option C: Single-page compact -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 1.5rem; background: #FAF8F6;">
+      <div style="height: 280px; background: #fff; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;">
+        <!-- Compact header bar -->
+        <div style="background: #1a1a1a; padding: 8px 16px; display: flex; align-items: center; gap: 16px;">
+          <span style="color: #CF0A2C; font-weight: 800; font-size: 14px;">rl-perf</span>
+          <div style="display: flex; gap: 4px; flex: 1;">
+            <div style="background: #333; border-radius: 4px; padding: 4px 10px; font-size: 10px; color: #ccc;">Llama-3.1-8B</div>
+            <div style="background: #333; border-radius: 4px; padding: 4px 10px; font-size: 10px; color: #ccc;">910C &times; 8</div>
+            <div style="background: #333; border-radius: 4px; padding: 4px 10px; font-size: 10px; color: #ccc;">TP1 PP1 DP8</div>
+          </div>
+          <div style="background: #CF0A2C; color: white; border-radius: 4px; padding: 4px 12px; font-size: 10px; font-weight: 600;">Run</div>
+        </div>
+        <!-- Expandable config -->
+        <div style="border-bottom: 1px solid #eee; padding: 10px 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+          <div>
+            <div style="font-size: 9px; text-transform: uppercase; color: #999; letter-spacing: 0.05em; margin-bottom: 3px;">Model</div>
+            <div style="font-size: 11px; color: #333;">Llama-3.1-8B &bull; 32L &bull; bf16</div>
+          </div>
+          <div>
+            <div style="font-size: 9px; text-transform: uppercase; color: #999; letter-spacing: 0.05em; margin-bottom: 3px;">Hardware</div>
+            <div style="font-size: 11px; color: #333;">Ascend 910C &bull; 8 devices</div>
+          </div>
+          <div>
+            <div style="font-size: 9px; text-transform: uppercase; color: #999; letter-spacing: 0.05em; margin-bottom: 3px;">Parallelism</div>
+            <div style="font-size: 11px; color: #333;">TP=1 PP=1 DP=8 EP=1</div>
+          </div>
+          <div>
+            <div style="font-size: 9px; text-transform: uppercase; color: #999; letter-spacing: 0.05em; margin-bottom: 3px;">Training</div>
+            <div style="font-size: 11px; color: #333;">10k prompts &bull; grp=8</div>
+          </div>
+        </div>
+        <!-- Results take full remaining space -->
+        <div style="flex: 1; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;">
+            <div style="text-align: center;">
+              <div style="font-size: 22px; font-weight: 800; color: #dc2626;">1.38h</div>
+              <div style="font-size: 9px; color: #999; text-transform: uppercase;">Epoch &bull; NOT FEASIBLE</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="font-size: 22px; font-weight: 800; color: #1a1a1a;">38.7k</div>
+              <div style="font-size: 9px; color: #999; text-transform: uppercase;">Gen TPS</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="font-size: 22px; font-weight: 800; color: #1a1a1a;">41.6k</div>
+              <div style="font-size: 9px; color: #999; text-transform: uppercase;">Train TPS</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="font-size: 22px; font-weight: 800; color: #f59e0b;">Training</div>
+              <div style="font-size: 9px; color: #999; text-transform: uppercase;">Bottleneck</div>
+            </div>
+          </div>
+          <div style="flex: 1; background: #FAFAF8; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 11px;">Charts area (timeline + memory)</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Top Bar Config + Full Results Page</h3>
+      <p>Config is a compact summary bar at top (click to expand/edit). Results dominate the page. Fastest for iterating — change one param, see results instantly. Like a trading terminal.</p>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top: 1rem; opacity: 0.7; font-size: 0.9rem;">
+  <strong>Recommendation:</strong> A (Side-by-Side) is the most natural for a parameter-exploration tool where you constantly tweak and compare. C is great if screen real estate for charts matters most.
+</p>

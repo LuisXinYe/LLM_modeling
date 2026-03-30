@@ -1,0 +1,95 @@
+<h2>Results Panel: How should KPIs + Charts be arranged?</h2>
+<p class="subtitle">The right side shows prediction results. How to maximize clarity?</p>
+
+<div class="cards">
+  <!-- Option A: KPIs on top, charts below -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 1.5rem; background: #FAF8F6;">
+      <div style="background: #FAFAF8; border-radius: 8px; overflow: hidden; height: 300px; display: flex; flex-direction: column; border: 1px solid #e8e5e0;">
+        <!-- KPI row -->
+        <div style="padding: 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+          <div style="background: #fff; border-radius: 6px; padding: 12px; border-left: 3px solid #dc2626;">
+            <div style="font-size: 8px; text-transform: uppercase; color: #999; letter-spacing: 0.06em;">Epoch Time</div>
+            <div style="font-size: 24px; font-weight: 800; color: #dc2626; margin: 4px 0;">1.38h</div>
+            <div style="font-size: 9px; color: #999;">NOT FEASIBLE</div>
+          </div>
+          <div style="background: #fff; border-radius: 6px; padding: 12px; border-left: 3px solid #16a34a;">
+            <div style="font-size: 8px; text-transform: uppercase; color: #999; letter-spacing: 0.06em;">Gen TPS</div>
+            <div style="font-size: 24px; font-weight: 800; color: #1a1a1a; margin: 4px 0;">38.7k</div>
+            <div style="font-size: 9px; color: #999;">1.18h generation</div>
+          </div>
+          <div style="background: #fff; border-radius: 6px; padding: 12px; border-left: 3px solid #16a34a;">
+            <div style="font-size: 8px; text-transform: uppercase; color: #999; letter-spacing: 0.06em;">Train TPS</div>
+            <div style="font-size: 24px; font-weight: 800; color: #1a1a1a; margin: 4px 0;">41.6k</div>
+            <div style="font-size: 9px; color: #999;">1.37h training</div>
+          </div>
+          <div style="background: #fff; border-radius: 6px; padding: 12px; border-left: 3px solid #f59e0b;">
+            <div style="font-size: 8px; text-transform: uppercase; color: #999; letter-spacing: 0.06em;">Bottleneck</div>
+            <div style="font-size: 20px; font-weight: 800; color: #1a1a1a; margin: 4px 0;">Training</div>
+            <div style="font-size: 9px; color: #999;">slack: 16.4%</div>
+          </div>
+        </div>
+        <!-- Charts tabs -->
+        <div style="padding: 0 16px;">
+          <div style="display: flex; gap: 0; border-bottom: 2px solid #e8e5e0;">
+            <div style="font-size: 11px; font-weight: 600; color: #CF0A2C; padding: 6px 14px; border-bottom: 2px solid #CF0A2C; margin-bottom: -2px;">Timeline</div>
+            <div style="font-size: 11px; color: #999; padding: 6px 14px;">Memory</div>
+            <div style="font-size: 11px; color: #999; padding: 6px 14px;">Topology</div>
+          </div>
+        </div>
+        <div style="flex: 1; margin: 8px 16px 16px; background: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 12px; border: 1px solid #e8e5e0;">
+          Plotly Chart
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. KPIs Top + Tabbed Charts Below</h3>
+      <p>4 KPI cards always visible at top. Charts switch via tabs (Timeline, Memory, Topology). Simple, clear hierarchy — numbers first, details on demand.</p>
+    </div>
+  </div>
+
+  <!-- Option B: KPIs integrated with charts -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 1.5rem; background: #FAF8F6;">
+      <div style="background: #FAFAF8; border-radius: 8px; overflow: hidden; height: 300px; display: flex; flex-direction: column; border: 1px solid #e8e5e0;">
+        <!-- Headline KPI -->
+        <div style="padding: 20px 20px 12px; display: flex; align-items: baseline; gap: 12px;">
+          <div style="font-size: 36px; font-weight: 800; color: #dc2626;">1.38h</div>
+          <div>
+            <div style="font-size: 11px; font-weight: 600; color: #dc2626;">NOT FEASIBLE</div>
+            <div style="font-size: 10px; color: #999;">epoch time &bull; training bottleneck (slack 16.4%)</div>
+          </div>
+        </div>
+        <!-- Secondary KPIs inline -->
+        <div style="padding: 0 20px 12px; display: flex; gap: 24px;">
+          <div>
+            <span style="font-size: 18px; font-weight: 700; color: #1a1a1a;">38,721</span>
+            <span style="font-size: 10px; color: #999; margin-left: 4px;">gen tok/s</span>
+          </div>
+          <div>
+            <span style="font-size: 18px; font-weight: 700; color: #1a1a1a;">41,586</span>
+            <span style="font-size: 10px; color: #999; margin-left: 4px;">train tok/s</span>
+          </div>
+          <div>
+            <span style="font-size: 18px; font-weight: 700; color: #f59e0b;">Training</span>
+            <span style="font-size: 10px; color: #999; margin-left: 4px;">bottleneck</span>
+          </div>
+        </div>
+        <div style="height: 1px; background: #e8e5e0; margin: 0 20px;"></div>
+        <!-- Charts stacked -->
+        <div style="flex: 1; padding: 12px 20px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="flex: 2; background: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 11px; border: 1px solid #e8e5e0;">Timeline Chart</div>
+          <div style="flex: 1; background: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 11px; border: 1px solid #e8e5e0;">Memory Chart</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Hero Number + Inline Charts</h3>
+      <p>Epoch time dominates as the hero metric (it's what leadership cares about most). Secondary KPIs inline below. All charts visible simultaneously, no tabs. More editorial, less dashboard.</p>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top: 1rem; opacity: 0.7; font-size: 0.9rem;">
+  <strong>Recommendation: A</strong> — the 4 equal-weight KPI cards give each metric appropriate prominence. Tabs keep the chart area clean. Note: Impeccable says "DON'T use the hero metric layout template" — Option B risks that anti-pattern.
+</p>

@@ -1,0 +1,131 @@
+<h2>Config Panel: How should the left panel organize parameters?</h2>
+<p class="subtitle">~50 parameters across Model, Hardware, Parallelism, RL Training. How to make it not overwhelming?</p>
+
+<div class="cards">
+  <!-- Option A: Accordion sections -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 1.5rem; background: #FAF8F6;">
+      <div style="width: 300px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; height: 300px; display: flex; flex-direction: column; border: 1px solid #e8e5e0;">
+        <div style="padding: 12px 16px; border-bottom: 1px solid #e8e5e0; display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #16a34a;"></div>
+            <span style="font-size: 12px; font-weight: 600; color: #1a1a1a;">Model</span>
+          </div>
+          <span style="font-size: 11px; color: #999;">Llama-3.1-8B</span>
+        </div>
+        <!-- Hardware expanded -->
+        <div style="border-bottom: 1px solid #e8e5e0;">
+          <div style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; background: #faf8f6; cursor: pointer;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="width: 6px; height: 6px; border-radius: 50%; background: #CF0A2C;"></div>
+              <span style="font-size: 12px; font-weight: 600; color: #CF0A2C;">Hardware</span>
+            </div>
+            <span style="font-size: 11px; color: #999;">&#9660;</span>
+          </div>
+          <div style="padding: 8px 16px 12px; display: flex; flex-direction: column; gap: 6px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 10px; color: #666;">Profile</span>
+              <span style="font-size: 11px; background: #f5f3f0; padding: 2px 8px; border-radius: 4px;">Ascend 910C</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 10px; color: #666;">Devices</span>
+              <span style="font-size: 11px; background: #f5f3f0; padding: 2px 8px; border-radius: 4px;">8</span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 4px;">
+              <div style="text-align: center; background: #f5f3f0; border-radius: 4px; padding: 4px;">
+                <div style="font-size: 8px; color: #999;">TP</div>
+                <div style="font-size: 12px; font-weight: 600;">1</div>
+              </div>
+              <div style="text-align: center; background: #f5f3f0; border-radius: 4px; padding: 4px;">
+                <div style="font-size: 8px; color: #999;">PP</div>
+                <div style="font-size: 12px; font-weight: 600;">1</div>
+              </div>
+              <div style="text-align: center; background: #f5f3f0; border-radius: 4px; padding: 4px;">
+                <div style="font-size: 8px; color: #999;">DP</div>
+                <div style="font-size: 12px; font-weight: 600;">8</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="padding: 12px 16px; border-bottom: 1px solid #e8e5e0; display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #16a34a;"></div>
+            <span style="font-size: 12px; font-weight: 600; color: #1a1a1a;">RL Training</span>
+          </div>
+          <span style="font-size: 11px; color: #999;">10k &times; 8</span>
+        </div>
+        <div style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #999;"></div>
+            <span style="font-size: 12px; font-weight: 600; color: #1a1a1a;">Search</span>
+          </div>
+          <span style="font-size: 11px; color: #999;">Pareto</span>
+        </div>
+        <div style="margin-top: auto; padding: 12px 16px;">
+          <div style="background: #CF0A2C; color: white; border-radius: 6px; padding: 10px; text-align: center; font-size: 13px; font-weight: 600;">Run Analysis</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Collapsible Accordion</h3>
+      <p>Each section (Model, Hardware, RL, Search) collapses to a one-line summary showing key values. Expand to edit. Only one section open at a time. Green dot = configured, red = needs attention.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Scrollable with sticky sections -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 1.5rem; background: #FAF8F6;">
+      <div style="width: 300px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; height: 300px; display: flex; flex-direction: column; border: 1px solid #e8e5e0;">
+        <!-- Mini nav -->
+        <div style="display: flex; padding: 8px; gap: 4px; border-bottom: 1px solid #e8e5e0;">
+          <div style="font-size: 10px; padding: 4px 10px; border-radius: 20px; background: #CF0A2C; color: white; font-weight: 600;">Model</div>
+          <div style="font-size: 10px; padding: 4px 10px; border-radius: 20px; background: #f5f3f0; color: #666;">Hardware</div>
+          <div style="font-size: 10px; padding: 4px 10px; border-radius: 20px; background: #f5f3f0; color: #666;">RL</div>
+          <div style="font-size: 10px; padding: 4px 10px; border-radius: 20px; background: #f5f3f0; color: #666;">Search</div>
+        </div>
+        <!-- All fields visible, scrollable -->
+        <div style="flex: 1; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto;">
+          <div style="font-size: 10px; font-weight: 700; color: #CF0A2C; text-transform: uppercase; letter-spacing: 0.06em;">Model</div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px;">
+            <span style="color: #666;">Template</span>
+            <span style="background: #f5f3f0; padding: 2px 8px; border-radius: 4px;">Llama-3.1-8B</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px;">
+            <span style="color: #666;">Hidden Size</span>
+            <span style="background: #f5f3f0; padding: 2px 8px; border-radius: 4px;">4096</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px;">
+            <span style="color: #666;">Layers</span>
+            <span style="background: #f5f3f0; padding: 2px 8px; border-radius: 4px;">32</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px;">
+            <span style="color: #666;">Attention</span>
+            <span style="background: #f5f3f0; padding: 2px 8px; border-radius: 4px;">GQA</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px;">
+            <span style="color: #666;">FFN</span>
+            <span style="background: #f5f3f0; padding: 2px 8px; border-radius: 4px;">SwiGLU</span>
+          </div>
+          <div style="height: 1px; background: #e8e5e0; margin: 4px 0;"></div>
+          <div style="font-size: 10px; font-weight: 700; color: #666; text-transform: uppercase; letter-spacing: 0.06em;">Hardware</div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px;">
+            <span style="color: #666;">Profile</span>
+            <span style="background: #f5f3f0; padding: 2px 8px; border-radius: 4px;">Ascend 910C</span>
+          </div>
+          <div style="font-size: 10px; color: #ccc; text-align: center;">... scroll for more ...</div>
+        </div>
+        <div style="padding: 12px 16px; border-top: 1px solid #e8e5e0;">
+          <div style="background: #CF0A2C; color: white; border-radius: 6px; padding: 10px; text-align: center; font-size: 13px; font-weight: 600;">Run Analysis</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. All Fields Visible (Scrollable)</h3>
+      <p>All parameters visible in a single scrollable panel. Pill nav at top for quick-jump to sections. No hiding, no expanding — everything is always editable. Dense but transparent.</p>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top: 1rem; opacity: 0.7; font-size: 0.9rem;">
+  <strong>Recommendation: A (Accordion)</strong> — keeps the panel compact and focused. The one-line summaries give instant overview of the full config. Expanding one section at a time reduces cognitive load.
+</p>
