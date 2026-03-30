@@ -29,7 +29,10 @@ from rl_perf.ui import tab_model, tab_hardware, tab_rl, tab_search, results
 # Custom CSS for professional dashboard look
 # ---------------------------------------------------------------------------
 _CUSTOM_CSS = """
-/* ── Spacing system ── */
+/* ── Font import ── */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+
+/* ── Spacing system & type scale ── */
 :root {
   --space-xs: 4px;
   --space-sm: 8px;
@@ -44,6 +47,33 @@ _CUSTOM_CSS = """
   --border-subtle: #E8E5E0;
   --text-primary: #1A1A1A;
   --text-secondary: #6B7280;
+
+  /* Type scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 2rem;
+  --text-4xl: 2.5rem;
+
+  /* Font weights */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Font family */
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+}
+
+/* ── Base typography ── */
+.gradio-container {
+  font-family: var(--font-sans) !important;
+  font-size: var(--text-base) !important;
+  line-height: 1.5 !important;
+  color: var(--text-primary) !important;
 }
 
 /* ── Header branding ── */
@@ -54,15 +84,20 @@ _CUSTOM_CSS = """
   margin-bottom: var(--space-lg) !important;
 }
 #app-header h1 {
-  font-size: 1.75rem !important;
-  font-weight: 700 !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--text-2xl) !important;
+  font-weight: var(--weight-bold) !important;
   color: var(--text-primary) !important;
   letter-spacing: -0.02em;
+  line-height: 1.2 !important;
   margin: 0 !important;
 }
 #app-header p {
+  font-family: var(--font-sans) !important;
   color: var(--text-secondary) !important;
-  font-size: 0.95rem !important;
+  font-size: var(--text-sm) !important;
+  font-weight: var(--weight-normal) !important;
+  line-height: 1.5 !important;
   margin: var(--space-xs) 0 0 0 !important;
 }
 
@@ -84,10 +119,12 @@ _CUSTOM_CSS = """
 }
 .section-header h3,
 .section-header h4 {
-  font-size: 0.9rem !important;
-  font-weight: 600 !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: var(--weight-semibold) !important;
   text-transform: uppercase !important;
-  letter-spacing: 0.04em !important;
+  letter-spacing: 0.06em !important;
+  line-height: 1.2 !important;
   color: var(--text-secondary) !important;
   margin: 0 !important;
 }
@@ -113,22 +150,30 @@ _CUSTOM_CSS = """
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 .kpi-card .kpi-label {
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   color: var(--text-secondary);
+  line-height: 1.2;
   margin-bottom: var(--space-xs);
 }
 .kpi-card .kpi-value {
-  font-size: 1.5rem;
-  font-weight: 700;
+  font-family: var(--font-sans);
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
-  line-height: 1.2;
+  line-height: 1.0;
+  letter-spacing: -0.02em;
 }
 .kpi-card .kpi-detail {
-  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-normal);
   color: var(--text-secondary);
+  line-height: 1.5;
   margin-top: var(--space-xs);
 }
 .kpi-card.kpi-feasible {
@@ -156,8 +201,10 @@ _CUSTOM_CSS = """
   padding: var(--space-2xl) var(--space-lg) !important;
 }
 .results-placeholder p {
+  font-family: var(--font-sans) !important;
   color: var(--text-secondary) !important;
-  font-size: 0.95rem !important;
+  font-size: var(--text-sm) !important;
+  line-height: 1.5 !important;
 }
 
 /* ── Error styling ── */
@@ -167,7 +214,30 @@ _CUSTOM_CSS = """
   border-radius: 4px !important;
   padding: var(--space-sm) var(--space-md) !important;
   color: var(--accent) !important;
-  font-weight: 500 !important;
+  font-weight: var(--weight-medium) !important;
+}
+
+/* ── Gradio input labels & body text ── */
+.gradio-container label,
+.gradio-container .label-wrap span {
+  font-family: var(--font-sans) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: var(--weight-medium) !important;
+}
+.gradio-container input,
+.gradio-container select,
+.gradio-container textarea {
+  font-family: var(--font-sans) !important;
+  font-size: var(--text-base) !important;
+}
+.gradio-container button {
+  font-family: var(--font-sans) !important;
+}
+.gradio-container .tab-nav button {
+  font-family: var(--font-sans) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: var(--weight-semibold) !important;
+  letter-spacing: 0.02em !important;
 }
 
 /* ── Primary button ── */
@@ -836,7 +906,9 @@ def create_app() -> gr.Blocks:
                         template="plotly_white", title="Pareto Frontier"
                     )
 
-                    status = f"Sensitivity sweep complete. {len(values)} values evaluated."
+                    status = (
+                        f"Sensitivity sweep complete. {len(values)} values evaluated."
+                    )
                     return empty_pareto, sens_fig, rows, status
 
             except Exception as e:
@@ -844,7 +916,12 @@ def create_app() -> gr.Blocks:
                 empty1.update_layout(template="plotly_white")
                 empty2 = _go.Figure()
                 empty2.update_layout(template="plotly_white")
-                return empty1, empty2, [], f'<div class="prediction-error">Error: {html.escape(str(e))}</div>'
+                return (
+                    empty1,
+                    empty2,
+                    [],
+                    f'<div class="prediction-error">Error: {html.escape(str(e))}</div>',
+                )
 
         sc["search_btn"].click(
             fn=_run_search,

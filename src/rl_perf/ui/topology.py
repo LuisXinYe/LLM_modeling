@@ -37,6 +37,9 @@ _EP_BORDER_COLORS = [
     "#ca8a04",
 ]
 
+# Common Plotly font setting for consistent typography
+_PLOTLY_FONT = dict(family="DM Sans, system-ui, sans-serif", size=13)
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -219,6 +222,7 @@ def build_logical_mesh_figure(
 
     fig.update_layout(
         template="plotly_white",
+        font=_PLOTLY_FONT,
         xaxis=dict(
             title="TP rank (within EP group)",
             tickmode="linear",

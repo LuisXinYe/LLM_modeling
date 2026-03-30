@@ -26,6 +26,9 @@ _AMBER = "#f59e0b"
 _CYAN = "#06b6d4"
 _LIGHT_PURPLE = "#c4b5fd"
 
+# Common Plotly font setting for consistent typography
+_PLOTLY_FONT = dict(family="DM Sans, system-ui, sans-serif", size=13)
+
 
 # ---------------------------------------------------------------------------
 # 1. Timeline figure
@@ -97,6 +100,7 @@ def build_timeline_figure(report: TargetReport, colocated: bool) -> go.Figure:
     fig = go.Figure(data=traces)
     fig.update_layout(
         template="plotly_white",
+        font=_PLOTLY_FONT,
         barmode=barmode,
         title="Epoch Timeline",
         xaxis_title="Time (hours)",
@@ -182,6 +186,7 @@ def build_memory_figure(report: TargetReport) -> go.Figure:
     fig = go.Figure(data=traces + [hbm_line])
     fig.update_layout(
         template="plotly_white",
+        font=_PLOTLY_FONT,
         barmode="stack",
         title="Per-Device Memory Breakdown",
         yaxis_title="Memory (GB)",
@@ -295,6 +300,7 @@ def build_pareto_figure(
     fig = go.Figure(data=traces)
     fig.update_layout(
         template="plotly_white",
+        font=_PLOTLY_FONT,
         title="Pareto Frontier: Devices vs Epoch Time",
         xaxis_title="Number of Devices",
         yaxis_title="Epoch Time (hours)",
@@ -375,6 +381,7 @@ def build_sensitivity_figure(
     fig = go.Figure(data=traces)
     fig.update_layout(
         template="plotly_white",
+        font=_PLOTLY_FONT,
         title=f"Sensitivity: {param_name}",
         xaxis_title=param_name,
         yaxis_title="Epoch Time (hours)",
