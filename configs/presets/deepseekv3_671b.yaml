@@ -27,7 +27,7 @@ hardware: "Ascend 910C"
 total_devices: 128
 parallelism:
   tp: 4
-  pp: 4
+  pp: 1
   ep: 8
   cp: 1
   cp_type: ring
