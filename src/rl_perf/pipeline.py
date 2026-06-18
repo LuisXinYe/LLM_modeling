@@ -260,36 +260,10 @@ def generation_time(model_cfg, hw, parallel_cfg, rl_cfg):
         vit_ops = build_vision_encoder_step_fwd(model_cfg, hw, parallel_cfg, rl_cfg.gen_batch_size)
         t_vit_fwd = simulate(vit_ops).wall_clock_time
 
-    # Simulate all PP stages and find the slowest
-    pp = parallel_cfg.pp
-    if pp <= 1:
-        prefill_ops, decode_ops = build_generation_step(model_cfg, hw, parallel_cfg, rl_cfg)
-        prefill_sim = simulate(prefill_ops)
-        t_prefill = prefill_sim.wall_clock_time + t_vit_fwd
-        t_decode_per_token = simulate(decode_ops).wall_clock_time
-    else:
-        all_layers = model_cfg.get_layers()
-        stages = _split_stages(all_layers, pp)
-        t_prefill = 0.0
-        t_decode_per_token = 0.0
-        prefill_sim = None
-        for i, stage_layers in enumerate(stages):
-            pf_ops, dc_ops = build_generation_step(
-                model_cfg, hw, parallel_cfg, rl_cfg, stage_layers=stage_layers,
-            )
-            pf_sim = simulate(pf_ops)
-            dc_sim = simulate(dc_ops)
-            if i == 0:
-                prefill_sim = pf_sim
-                # ViT runs on stage 0 before prefill
-                pf_time = pf_sim.wall_clock_time + t_vit_fwd
-            else:
-                pf_time = pf_sim.wall_clock_time
-            # Pipeline time determined by the slowest stage
-            if pf_time > t_prefill:
-                t_prefill = pf_time
-            if dc_sim.wall_clock_time > t_decode_per_token:
-                t_decode_per_token = dc_sim.wall_clock_time
+    prefill_ops, decode_ops = build_generation_step(model_cfg, hw, parallel_cfg, rl_cfg)
+    prefill_sim = simulate(prefill_ops)
+    t_prefill = prefill_sim.wall_clock_time + t_vit_fwd
+    t_decode_per_token = simulate(decode_ops).wall_clock_time
 
     eff_len = effective_response_len(
         avg=rl_cfg.avg_response_len,
