@@ -19,11 +19,22 @@ class Phase(str, Enum):
     TRAIN_BWD = "train_bwd"  # MVP: combined backward
 
 
+class RLAlgorithm(str, Enum):
+    """RL training algorithm selection.
+
+    GRPO: Group Relative Policy Optimization — no critic model needed.
+    GSPO:  Group Sequence Policy Optimization — no critic model needed.
+    """
+
+    GRPO = "grpo"
+    GSPO = "gspo"
+
+
 class LayerConfig(BaseModel):
     """Per-layer architecture configuration.
 
     Attributes:
-        attention: Attention variant — one of "MHA", "GQA", "MLA", "SWA", "Mamba".
+        attention: Attention variant — one of "MHA", "GQA", "MLA", "SWA".
         num_heads: Number of query attention heads. Must divide evenly by TP degree.
         num_kv_heads: Number of key/value heads (< num_heads for GQA).
         head_dim: Dimension per attention head.
@@ -42,8 +53,8 @@ class LayerConfig(BaseModel):
         mhc_expansion: Expansion factor for mHC residual.
     """
 
-    attention: str = "GQA"  # MHA, GQA, MLA, SWA, Mamba
-    num_heads: int = 32
+    attention: str = "GQA"  # MHA, GQA, MLA, SWA
+    num_heads: int = 64
     num_kv_heads: int = 8
     head_dim: int = 128
     ffn: str = "SwiGLU"  # SwiGLU, MoE
@@ -65,6 +76,61 @@ class LayerConfig(BaseModel):
     mhc_expansion: int = 4
 
 
+class VisionEncoderConfig(BaseModel):
+    """Vision Transformer encoder configuration for multimodal models.
+
+    Attributes:
+        hidden_size: ViT hidden dimension (e.g. 1536 for UNIT_1B).
+        num_layers: Number of ViT transformer layers.
+        num_heads: Number of query attention heads.
+        num_kv_heads: Number of key/value heads (0 = same as num_heads, i.e. MHA).
+        head_dim: Dimension per attention head (0 = hidden_size // num_heads).
+        ffn: Feed-forward variant — "SwiGLU" or "SwiGLU".
+        intermediate_size: FFN hidden dimension.
+        dtype: Weight data type.
+        anyres_max_pixels: Maximum pixels for anyres patch computation.
+        patch_size: Patch size for image tokenization.
+        temporal_patch_size: Temporal patch size for video tokenization.
+        merge_size: Merge size for spatial downsampling.
+        mm_vision_token_down_size: Token downsampling factor.
+    """
+
+    hidden_size: int
+    num_layers: int
+    num_heads: int
+    num_kv_heads: int = 0  # Defaults to num_heads (MHA)
+    head_dim: int = 0  # Defaults to hidden_size // num_heads
+    ffn: str = "SwiGLU"
+    intermediate_size: int
+    dtype: str = "bf16"
+    # Anyres patch parameters for image_seq_len computation
+    anyres_max_pixels: int = 1806336
+    patch_size: int = 14
+    temporal_patch_size: int = 2
+    merge_size: int = 2
+    mm_vision_token_down_size: int = 2
+
+    def get_head_dim(self) -> int:
+        return self.head_dim or self.hidden_size // self.num_heads
+
+    def get_num_kv_heads(self) -> int:
+        return self.num_kv_heads or self.num_heads
+
+    def image_seq_len(self) -> int:
+        """Compute image sequence length based on anyres parameters.
+
+        anyres_max_pixels / (patch_size^2) / (merge_size^2) / temporal_patch_size
+        / mm_vision_token_down_size
+
+        For Pangu-74B-VL: 1806336 / 196 / 4 / 2 / 2 = 576 patches
+        """
+        patch_tokens = self.anyres_max_pixels // (self.patch_size ** 2)
+        merged = patch_tokens // (self.merge_size ** 2)
+        temporal = merged // self.temporal_patch_size
+        downsampled = temporal // self.mm_vision_token_down_size
+        return downsampled
+
+
 class ModelConfig(BaseModel):
     """Model architecture configuration.
 
@@ -77,6 +143,7 @@ class ModelConfig(BaseModel):
         default_layer: Template applied to all layers when `layers` is None.
         layers: Per-layer configs; overrides default_layer if provided.
         auxiliary: Extra model features, e.g. {"mtp_depth": 2}.
+        vision_encoder: Optional ViT config for multimodal models.
     """
 
     name: str
@@ -87,6 +154,7 @@ class ModelConfig(BaseModel):
     default_layer: Optional[LayerConfig] = None
     layers: Optional[List[LayerConfig]] = None
     auxiliary: Optional[dict] = None  # mtp_depth etc.
+    vision_encoder: Optional[VisionEncoderConfig] = None
 
     def get_layers(self) -> List[LayerConfig]:
         if self.layers:
@@ -128,9 +196,11 @@ class HardwareConfig(BaseModel):
         hbm_bandwidth_tb_s: HBM bandwidth in TB/s.
         hbm_usable_ratio: Fraction of HBM available after framework overhead (0.0-1.0).
         intra_node_bw_gb_s: Intra-node interconnect bandwidth in GB/s (e.g. NVLink).
+        intra_node_latency_us: Intra-node interconnect latency in microseconds (e.g. NVLink/HCCS).
         inter_node_bw_gb_s: Inter-node network bandwidth in GB/s.
         inter_node_latency_us: Inter-node latency in microseconds.
         devices_per_node: Number of accelerators per node.
+        cpu_gpu_bw_gb_s: CPU↔GPU data transfer bandwidth in GB/s (PCIe or HCCS).
         calibration: Efficiency calibration factors.
     """
 
@@ -140,9 +210,11 @@ class HardwareConfig(BaseModel):
     hbm_bandwidth_tb_s: float
     hbm_usable_ratio: float = 0.85
     intra_node_bw_gb_s: float = 400
+    intra_node_latency_us: float = 2
     inter_node_bw_gb_s: float = 100
     inter_node_latency_us: float = 5
     devices_per_node: int = 8
+    cpu_gpu_bw_gb_s: float = 32.0  # CPU↔GPU PCIe/NVLink bandwidth in GB/s
     calibration: CalibrationConfig = CalibrationConfig()
 
     @property
@@ -154,7 +226,6 @@ class RLConfig(BaseModel):
     """RL training workload configuration.
 
     Attributes:
-        total_prompts: Number of unique prompts per epoch.
         group_size: Responses generated per prompt (for GRPO/group scoring).
         avg_prompt_len: Average prompt length in tokens.
         avg_response_len: Average response length in tokens.
@@ -162,7 +233,10 @@ class RLConfig(BaseModel):
         std_response_len: Std-dev of response length in tokens (optional).
         train_micro_batch_size: Micro-batch size for training (samples).
         gradient_accumulation_steps: Number of gradient accumulation steps.
+        train_batch_size: Global mini-batch size (same as ppo_mini_batch_size in verl).
         gen_batch_size: Batch size for generation (samples per device).
+        algorithm: RL algorithm — "grpo" or "gspo".
+        reward_model: Whether a separate reward model is used for advantage estimation.
         reference_model: Whether a reference model is kept in memory.
         ref_offload_cpu: If True, reference model weights are offloaded to CPU.
         colocated: If True, generation and training share the same devices.
@@ -170,24 +244,32 @@ class RLConfig(BaseModel):
         mtp_acceptance_len: Expected accepted tokens per MTP step (optional).
     """
 
-    total_prompts: int
-    group_size: int = 8
-    avg_prompt_len: int = 512
+    group_size: int = 16
+    avg_prompt_len: int = 2048
+    max_promt_len: int = 4096
     avg_response_len: int = 2048
     max_response_len: int = 4096
     std_response_len: Optional[int] = None
-    train_micro_batch_size: int = 4
+    train_micro_batch_size: int = 1
+    mini_batch_size: int = 36
     gradient_accumulation_steps: int = 1
-    gen_batch_size: int = 64
+    train_batch_size: int = 36
+    gen_batch_size: int = 18
+    algorithm: str = "grpo"
+    reward_model: bool = False
     reference_model: bool = True
     ref_offload_cpu: bool = False
-    colocated: bool = False
+    colocated: bool = True
     use_speculative_decoding: bool = False
     mtp_acceptance_len: Optional[int] = None
 
-    @property
-    def total_responses(self) -> int:
-        return self.total_prompts * self.group_size
+    @field_validator("algorithm")
+    @classmethod
+    def validate_algorithm(cls, v):
+        valid = [e.value for e in RLAlgorithm]
+        if v not in valid:
+            raise ValueError(f"algorithm must be one of {valid}, got '{v}'")
+        return v
 
 
 class ParallelismConfig(BaseModel):
@@ -195,7 +277,8 @@ class ParallelismConfig(BaseModel):
 
     Attributes:
         tp: Tensor parallelism degree. Must be >= 1 and divide num_heads.
-        pp: Pipeline parallelism degree. Must be >= 1 and divide num_layers.
+        pp: Pipeline parallelism degree. Must be >= 1. Uneven layer distribution
+            is supported (first N%pp stages get one extra layer).
         dp: Data parallelism degree. Must be >= 1.
         ep: Expert parallelism degree (for MoE). Must be >= 1.
         cp: Context parallelism degree. Must be >= 1.
@@ -208,6 +291,8 @@ class ParallelismConfig(BaseModel):
         recompute_attention: Recompute attention in backward to save activation memory.
         full_recomputation: Recompute all activations in backward pass.
         optimizer_offload: Offload optimizer states to CPU.
+        param_offload: Offload model parameters to CPU when not computing.
+        grad_offload: Offload gradients to CPU.
         activation_offload: Offload activations to CPU during forward pass.
     """
 
@@ -224,6 +309,8 @@ class ParallelismConfig(BaseModel):
     recompute_attention: bool = False
     full_recomputation: bool = False
     optimizer_offload: bool = False
+    param_offload: bool = False
+    grad_offload: bool = False
     activation_offload: bool = False
 
     @field_validator("tp", "pp", "dp", "ep", "cp")
@@ -240,7 +327,7 @@ class ParallelismConfig(BaseModel):
 
 def _load_yaml_config(path: str, config_class):
     """Load a pydantic config from a YAML file."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return config_class(**data)
 
