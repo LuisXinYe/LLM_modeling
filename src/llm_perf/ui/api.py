@@ -36,6 +36,7 @@ _MODEL_TEMPLATES = {
     "Mistral-7B": "mistral_7b",
     "Qwen3-235B-MoE": "qwen3_235b_moe",
     "DeepSeekV3-671B": "deepseekv3_671b",
+    "DeepSeek-V4": "deepseekv4",
 }
 
 # Alias the model names used in runtime YAMLs (which follow the demo naming)
@@ -43,7 +44,6 @@ _MODEL_TEMPLATES = {
 # from the _MODEL_TEMPLATES keys used by the model-template dropdown.
 _MODEL_ALIASES = {
     "DeepSeek-V3-671B": "deepseekv3_671b",
-    "DeepSeek-V4": "deepseekv4",
     "Qwen3-235B-A22B": "qwen3_235b_moe",
 }
 
