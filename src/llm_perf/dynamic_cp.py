@@ -38,7 +38,7 @@ from __future__ import annotations
 import math
 from typing import List, Optional, Tuple
 
-from llm_perf.builder import build_training_step, _split_stages
+from llm_perf.builder import build_forward_pass, build_training_step, _split_stages
 from llm_perf.pp_pipeline import PoolUnit, stage_unit_time, simulate_pipeline
 from llm_perf.simulator import SimResult, simulate
 
@@ -144,6 +144,23 @@ def _sample_sim(model_cfg, hw, base_par, rl_cfg, seq_len: float, cp: int) -> Sim
     return simulate(build_training_step(model_cfg, hw, par, cfg))
 
 
+def _fwd_compute_cp1(model_cfg, hw, base_par, wl, seq_len: float) -> float:
+    """Forward-only compute time of the full model at cp=1 (pp=1, dp=1).
+
+    Used as the MFU numerator's per-sequence unit so the numerator's implied
+    backward cost (via ``1 + bwd_factor`` in the caller) matches the pipeline
+    simulator's heuristic backward model (``bwd_t = bwd_factor * fwd_t``),
+    instead of ``build_training_step``'s real forward+backward (~6x forward).
+    """
+    par = base_par.model_copy(update={"cp": 1, "pp": 1, "dp": 1})
+    cfg = wl.model_copy(update={
+        "avg_prompt_len": int(seq_len),
+        "avg_response_len": 0,
+        "train_micro_batch_size": 1,
+    })
+    return simulate(build_forward_pass(model_cfg, hw, par, cfg)).compute_time
+
+
 def _recipe(model_cfg, hw, parallel_cfg, rl_cfg, buckets, total_ranks, quota,
             token_budget, max_cp, p, v, bwd_factor, order, cp_of,
             global_batch_seqs):
@@ -165,13 +182,31 @@ def _recipe(model_cfg, hw, parallel_cfg, rl_cfg, buckets, total_ranks, quota,
                        global_batch_seqs)
     units = order_units(units, order=order)
     res = run_pipeline(model_cfg, hw, parallel_cfg, rl_cfg, units, p, v, bwd_factor)
-    # MFU vs irreducible cp=1 compute (existing convention)
-    useful = sum(_sample_sim(model_cfg, hw, parallel_cfg, rl_cfg, u.seq_len, 1).compute_time
+    # MFU vs irreducible cp=1 compute (existing convention). Each pool-wide
+    # unit at CP degree u.cp actually runs dp_u = total_ranks // u.cp sequences
+    # of useful compute concurrently, so the numerator must be scaled by the
+    # dp multiplier; the denominator is the GPU-time available over the whole
+    # rank pool (total_ranks * p stages * wall-clock step).
+    #
+    # The numerator must assume the SAME backward-cost model as the pipeline
+    # (denominator): bwd_t = bwd_factor * fwd_t. Using build_training_step's
+    # real forward+backward (~6x forward) here would inflate the numerator
+    # relative to the simulator's heuristic denominator and push MFU above
+    # the compute_eff ceiling. So useful = forward(cp=1) * (1 + bwd_factor).
+    fwd_cache: dict = {}
+
+    def fwd_cp1(seq_len):
+        if seq_len not in fwd_cache:
+            fwd_cache[seq_len] = _fwd_compute_cp1(model_cfg, hw, parallel_cfg, rl_cfg, seq_len)
+        return fwd_cache[seq_len]
+
+    useful = sum((total_ranks // max(1, u.cp)) *
+                 fwd_cp1(u.seq_len) * (1.0 + bwd_factor)
                  for u in units)
     rank_seconds = sum(u.cp * _sample_sim(model_cfg, hw, parallel_cfg, rl_cfg,
                                           u.seq_len, u.cp).wall_clock_time for u in units)
     compute_eff = hw.calibration.compute_eff_large_gemm
-    denom = p * res.step_time
+    denom = total_ranks * p * res.step_time
     mfu = compute_eff * useful / denom if denom > 0 else 0.0
     weight_gb = (_sample_sim(model_cfg, hw, parallel_cfg, rl_cfg, units[0].seq_len,
                              units[0].cp).weight_bytes / 1e9) if units else 0.0

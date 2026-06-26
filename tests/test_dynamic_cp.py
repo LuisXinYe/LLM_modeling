@@ -155,3 +155,18 @@ def test_run_pipeline_smoke(mc, hw):
     res = run_pipeline(mc, hw, par, wl, units, p=8, v=1)
     assert res.step_time > 0
     assert 0.0 <= res.bubble_ratio < 1.0
+
+
+def test_compare_mfu_bounded(mc, hw):
+    # MFU numerator/denominator must use a consistent backward-cost model, so
+    # MFU (achieved/peak) is bounded by the hardware compute_eff ceiling
+    # (<= 0.5 for ascend_910c) for BOTH static and dynamic recipes — dynamic-CP
+    # raises utilization but cannot exceed the GEMM efficiency ceiling.
+    par = ParallelismConfig(tp=2, cp=8, dp=1, pp=8)
+    wl = WorkloadConfig(group_size=1)
+    buckets = lognormal_buckets(4096, 8192, 65536, n_buckets=6)
+    r = compare_cp_strategies(mc, hw, par, wl, buckets, total_ranks=8, pp=8, v=1)
+    compute_eff = hw.calibration.compute_eff_large_gemm
+    assert 0 < r["static"]["mfu"] <= compute_eff
+    assert 0 < r["dynamic"]["mfu"] <= compute_eff
+    assert r["dynamic"]["mfu"] > r["static"]["mfu"]
