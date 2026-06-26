@@ -152,3 +152,28 @@ def test_1f1b_memory_bounded_variable_durations():
         _unequal_times(m_large, p), [1.0] * m_large, p, v=1
     )
     assert res_large.peak_activation_bytes <= 1.5 * res_small.peak_activation_bytes
+
+
+def test_variable_length_bubble_differs_from_closed_form():
+    # mix of fast (short) and slow (long) units → bubble != equal-length formula
+    p, v = 4, 1
+    times = []
+    for j in range(8):
+        t = 1.0 if j % 2 == 0 else 4.0   # alternating fast/slow units
+        times.append([(t, 2.0 * t)] * (p * v))
+    res = simulate_pipeline(times, [1.0] * 8, p, v=v)
+    closed = (p - 1) / (8 + p - 1)
+    assert res.bubble_ratio != pytest.approx(closed, abs=1e-6)
+    assert 0.0 <= res.bubble_ratio < 1.0
+
+
+def test_ordering_affects_bubble():
+    # clustering all slow units last vs interleaving changes the bubble
+    p, v = 4, 1
+    def mk(order):
+        return [[(t, 2.0 * t)] * (p * v) for t in order]
+    clustered = mk([1, 1, 1, 1, 4, 4, 4, 4])
+    interleaved = mk([1, 4, 1, 4, 1, 4, 1, 4])
+    b_cluster = simulate_pipeline(clustered, [1.0] * 8, p, v=v).bubble_ratio
+    b_inter = simulate_pipeline(interleaved, [1.0] * 8, p, v=v).bubble_ratio
+    assert b_cluster != pytest.approx(b_inter, abs=1e-6)
