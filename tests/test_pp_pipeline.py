@@ -4,7 +4,12 @@ from llm_perf.config import (
     ParallelismConfig, WorkloadConfig, load_hardware_config, load_model_config,
 )
 from llm_perf.builder import _split_stages
-from llm_perf.pp_pipeline import stage_unit_time, pipeline_schedule
+from llm_perf.pp_pipeline import (
+    stage_unit_time,
+    pipeline_schedule,
+    simulate_pipeline,
+    PipelineResult,
+)
 
 CONFIGS = Path(__file__).parent.parent / "configs"
 
@@ -90,3 +95,36 @@ def test_schedule_forward_precedes_backward_per_unit():
                         f"device {d}: F for {key} does not precede its B "
                         f"(m={m}, p={p}, v={v})"
                     )
+
+
+def _equal_times(m, p, v, fwd=1.0, bwd=2.0):
+    return [[(fwd, bwd)] * (p * v) for _ in range(m)]
+
+
+def test_anchor_bubble_v1():
+    m, p = 8, 4
+    res = simulate_pipeline(_equal_times(m, p, 1), [1.0] * m, p, v=1)
+    assert isinstance(res, PipelineResult)
+    expected = (p - 1) / (m + p - 1)         # standard 1F1B bubble
+    assert res.bubble_ratio == pytest.approx(expected, abs=0.02)
+
+
+def test_anchor_bubble_v2():
+    m, p, v = 8, 4, 2
+    res = simulate_pipeline(_equal_times(m, p, v), [1.0] * m, p, v=v)
+    expected = (p - 1) / (m * v + p - 1)     # interleaved bubble
+    assert res.bubble_ratio == pytest.approx(expected, abs=0.04)
+
+
+def test_pp1_no_bubble():
+    m, p = 5, 1
+    res = simulate_pipeline(_equal_times(m, p, 1, fwd=1.0, bwd=2.0), [1.0] * m, p, v=1)
+    assert res.bubble_ratio == pytest.approx(0.0, abs=1e-9)
+    assert res.step_time == pytest.approx(m * (1.0 + 2.0))
+
+
+def test_more_microbatches_smaller_bubble():
+    p = 4
+    b_few = simulate_pipeline(_equal_times(4, p, 1), [1.0] * 4, p, v=1).bubble_ratio
+    b_many = simulate_pipeline(_equal_times(16, p, 1), [1.0] * 16, p, v=1).bubble_ratio
+    assert b_many < b_few
