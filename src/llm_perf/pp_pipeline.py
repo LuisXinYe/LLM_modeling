@@ -63,14 +63,16 @@ def _stage_1f1b_order(stage_idx: int, num_stages: int, m: int) -> List[Tuple[int
     for _ in range(warmup):
         events.append((f_idx, "F"))
         f_idx += 1
-    # 1F1B phase: interleave F and B, but start with B (no extra F before first B)
-    while f_idx < m or b_idx < m:
-        if b_idx < m:
-            events.append((b_idx, "B"))
-            b_idx += 1
-        if f_idx < m:
-            events.append((f_idx, "F"))
-            f_idx += 1
+    # 1F1B phase: interleave F and B, one F then one B
+    while f_idx < m:
+        events.append((f_idx, "F"))
+        f_idx += 1
+        events.append((b_idx, "B"))
+        b_idx += 1
+    # Cooldown phase: drain remaining backwards
+    while b_idx < m:
+        events.append((b_idx, "B"))
+        b_idx += 1
     return events
 
 

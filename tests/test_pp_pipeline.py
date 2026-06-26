@@ -51,9 +51,10 @@ def test_schedule_counts_v1():
         assert sum(1 for _, _, ph in evs if ph == "B") == m
         # all events on device d belong to vstage d (V=1)
         assert all(vs == d for _, vs, _ in evs)
-        # 1F1B warmup: device d issues (p-1-d) forwards before its first backward
+        # 1F1B warmup: device d issues (p-1-d) forwards, then one more F before
+        # its first backward (F always precedes its matching B in steady state)
         first_b = next(i for i, (_, _, ph) in enumerate(evs) if ph == "B")
-        assert first_b == (p - 1 - d)
+        assert first_b == (p - d)
 
 
 def test_schedule_counts_v2():
@@ -66,3 +67,26 @@ def test_schedule_counts_v2():
         assert sum(1 for _, _, ph in evs if ph == "F") == m * v
         assert sum(1 for _, _, ph in evs if ph == "B") == m * v
         assert all(vs % p == d for _, vs, _ in evs)
+
+
+def test_schedule_forward_precedes_backward_per_unit():
+    # Causality invariant: for every (unit_idx, vstage) pair on a device,
+    # the F event must appear before the matching B event in that device's
+    # ordered event list.
+    for m, p, v in [(2, 4, 1), (4, 4, 2)]:
+        sched = pipeline_schedule(m, p, v)
+        for d, evs in enumerate(sched):
+            f_pos = {}
+            for pos, (unit_idx, vstage, phase) in enumerate(evs):
+                key = (unit_idx, vstage)
+                if phase == "F":
+                    f_pos[key] = pos
+                else:  # phase == "B"
+                    assert key in f_pos, (
+                        f"device {d}: B for {key} occurs with no prior F "
+                        f"(m={m}, p={p}, v={v})"
+                    )
+                    assert f_pos[key] < pos, (
+                        f"device {d}: F for {key} does not precede its B "
+                        f"(m={m}, p={p}, v={v})"
+                    )
