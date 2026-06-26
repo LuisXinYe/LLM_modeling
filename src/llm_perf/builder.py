@@ -903,6 +903,12 @@ def build_training_step(
         prev_dep = len(all_ops) - 1
 
     # ------ Backward pass (reversed layers) ------------------------------------
+    # DP gradient sync is bucketed per layer and issued as soon as that
+    # layer's backward finishes, on the separate "dp_comm" stream — it then
+    # overlaps with the backward compute of earlier (still-pending) layers,
+    # instead of waiting for the whole backward pass to complete. This
+    # mirrors real systems (PyTorch DDP / Megatron gradient bucketing).
+    dp_sync_indices: List[int] = []
     for layer_cfg in reversed(stage_layers):
         offset = len(all_ops)
         layer_ops = build_layer_ops(
@@ -921,45 +927,50 @@ def build_training_step(
         if layer_ops:
             prev_dep = len(all_ops) - 1
 
-    # ------ DP gradient sync ---------------------------------------------------
-    param_count = _estimate_param_count(model_cfg, parallel_cfg, stage_layers)
-    if dp > 1:
-        grad_bytes = param_count * dtype_bytes  # gradient same dtype as weights
+        if dp > 1 and layer_ops:
+            layer_param_count = _estimate_param_count(model_cfg, parallel_cfg, [layer_cfg])
+            grad_bytes = layer_param_count * dtype_bytes  # gradient same dtype as weights
 
-        if parallel_cfg.zero_stage < 3:
-            # AllReduce (ring)
-            dp_cost = ops.op_allreduce(grad_bytes, group_size=dp)
-        else:
-            # ZeRO-3: ReduceScatter
-            dp_cost = ops.op_reducescatter(grad_bytes, group_size=dp)
+            if parallel_cfg.zero_stage < 3:
+                # AllReduce (ring)
+                dp_cost = ops.op_allreduce(grad_bytes, group_size=dp)
+            else:
+                # ZeRO-3: ReduceScatter
+                dp_cost = ops.op_reducescatter(grad_bytes, group_size=dp)
 
-        dp_algorithm = "ring_half" if parallel_cfg.zero_stage >= 3 else "ring"
-        dp_duration = ops.comm_time(
-            dp_cost,
-            hw,
-            group_size=dp,
-            is_intra_node=_is_intra_node(dp, hw),
-            algorithm=dp_algorithm,
-        )
-        dp_sync = SimOp(
-            name="dp_grad_sync",
-            stream="dp_comm",
-            duration=dp_duration,
-            depends_on=[prev_dep] if prev_dep is not None else [],
-            weight_bytes=0,
-            output_bytes=0,
-            comm_bytes=dp_cost.comm_bytes,
-        )
-        all_ops.append(dp_sync)
-        prev_dep = len(all_ops) - 1
+            dp_algorithm = "ring_half" if parallel_cfg.zero_stage >= 3 else "ring"
+            dp_duration = ops.comm_time(
+                dp_cost,
+                hw,
+                group_size=dp,
+                is_intra_node=_is_intra_node(dp, hw),
+                algorithm=dp_algorithm,
+            )
+            dp_sync = SimOp(
+                name="dp_grad_sync",
+                stream="dp_comm",
+                duration=dp_duration,
+                depends_on=[prev_dep],  # this layer's last backward op
+                weight_bytes=0,
+                output_bytes=0,
+                comm_bytes=dp_cost.comm_bytes,
+            )
+            all_ops.append(dp_sync)
+            dp_sync_indices.append(len(all_ops) - 1)
 
     # ------ Optimizer step (placeholder) ---------------------------------------
+    # Must wait for the last backward op AND the last (dp_comm-serialized)
+    # gradient sync bucket — whichever finishes later.
+    param_count = _estimate_param_count(model_cfg, parallel_cfg, stage_layers)
+    optim_depends = [prev_dep] if prev_dep is not None else []
+    if dp_sync_indices:
+        optim_depends.append(dp_sync_indices[-1])
     optim_duration = param_count * 1e-10  # rough placeholder
     optim_op = SimOp(
         name="optimizer_step",
         stream="compute",
         duration=optim_duration,
-        depends_on=[prev_dep] if prev_dep is not None else [],
+        depends_on=optim_depends,
         weight_bytes=0,
         output_bytes=0,
     )
