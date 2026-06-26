@@ -12,6 +12,7 @@
 
 - Reference scenario: Llama-3.1-8B, 128 GPUs, `tp=2 × pp=8 × (dp·cp pool R=8)`, `max_cp=8`, 1F1B with `V≥1`.
 - Comm-overlap model lives ONLY in the new `pp_pipeline.py` path. Do NOT modify `builder.py`, `inference.py`, `training.py`, `post_training.py` — existing 193 tests must stay green.
+  - **Accepted exception (commit 575f6e8):** the per-layer bucketed DP AllReduce overlap change in `build_training_step` (one `dp_comm` AllReduce per layer, overlapping backward, DDP/Megatron-style) was reviewed and accepted as more realistic. It is pinned by `test_dp_bucketed_allreduce_per_layer` in `tests/test_builder.py`. NO OTHER `builder.py` behavior may change.
 - MFU uses the irreducible-FLOPs (cp=1) baseline convention already in `dynamic_cp.py`.
 - `bwd_t = bwd_factor × fwd_t`, `bwd_factor` default `2.0`.
 - Overlap rule: per-stage `fwd_t = max(compute_time, cp_comm_time) + tp_comm_time` (CP-ring overlaps compute; TP comm does not).

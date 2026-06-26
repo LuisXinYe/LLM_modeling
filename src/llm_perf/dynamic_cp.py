@@ -325,7 +325,6 @@ def assign_bin_cp(model_cfg, hw, base_par, wl, seq_len, quota, max_cp,
         if mem_gb <= usable_hbm_gb or cp >= max_cp:
             return cp
         cp = min(max_cp, cp * 2)
-    return max_cp
 
 
 def pack_units(buckets, total_ranks, token_budget, cp_of, packing_eff_of,

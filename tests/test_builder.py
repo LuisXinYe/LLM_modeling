@@ -463,6 +463,46 @@ def test_build_training_step_allows_uneven_pp():
     assert max(stage_sizes) - min(stage_sizes) <= 1
 
 
+def test_dp_bucketed_allreduce_per_layer(hw, rl_cfg):
+    """dp > 1: DP gradient sync is bucketed PER LAYER on the dp_comm stream,
+    overlapping with backward (DDP/Megatron-style gradient bucketing) —
+    NOT a single AllReduce issued after the whole backward pass.
+
+    With num_layers=4 (shrunk from llama3_1_8b for speed) and dp=8, the
+    builder must emit exactly 4 dp_comm ops (one bucket per layer), each
+    depending directly on that layer's own backward (a compute-stream op),
+    confirming the overlap wiring. With dp=1, there must be zero dp_comm ops.
+    """
+    mc = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    mc.num_layers = 4
+    num_layers = len(mc.get_layers())
+    assert num_layers == 4
+
+    parallel_dp8 = ParallelismConfig(tp=1, pp=1, dp=8, ep=1)
+    all_ops = build_training_step(mc, hw, parallel_dp8, rl_cfg)
+
+    dp_comm_ops = [(i, op) for i, op in enumerate(all_ops) if op.stream == "dp_comm"]
+    # One bucket per transformer layer in the stage — NOT a single post-backward AllReduce.
+    assert len(dp_comm_ops) == num_layers == 4, (
+        f"Expected one dp_comm bucket per layer ({num_layers}), got {len(dp_comm_ops)}"
+    )
+
+    # Each dp_comm bucket must depend (directly) on a backward compute op of its
+    # own layer, proving it overlaps with backward instead of waiting for all of it.
+    for i, op in dp_comm_ops:
+        assert len(op.depends_on) == 1
+        dep_idx = op.depends_on[0]
+        dep_op = all_ops[dep_idx]
+        assert dep_op.stream == "compute", (
+            f"dp_comm op[{i}] should depend on a backward compute op, got stream={dep_op.stream}"
+        )
+
+    # Sanity: dp=1 emits no dp_comm ops at all.
+    parallel_dp1 = ParallelismConfig(tp=1, pp=1, dp=1, ep=1)
+    all_ops_dp1 = build_training_step(mc, hw, parallel_dp1, rl_cfg)
+    assert sum(1 for op in all_ops_dp1 if op.stream == "dp_comm") == 0
+
+
 def test_hybrid_layers_different_types(hw, rl_cfg):
     """Model with per-layer configs should build ops for each layer type."""
     mc = ModelConfig(

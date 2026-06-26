@@ -81,6 +81,9 @@ def main():
     print("-" * 80)
     print(f"  Speedup (static/dynamic step): {r['speedup']:.2f}x   "
           f"TFLOPS/GPU ratio: {r['tflops_ratio']:.2f}x")
+    print("  Note: the headline speedup is sensitive to --global-batch-seqs "
+          "(observed to drift ~1.5-1.9x over a swept range) — treat the single "
+          "number above as illustrative, not a guaranteed constant.")
 
 
 if __name__ == "__main__":
