@@ -4,7 +4,7 @@ abstraction. See docs/superpowers/specs/2026-06-26-dynamic-cp-pipeline-design.md
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from llm_perf.builder import build_forward_pass
 from llm_perf.simulator import simulate
@@ -50,3 +50,50 @@ def stage_unit_time(
     if cache is not None:
         cache[key] = result
     return result
+
+
+def _stage_1f1b_order(stage_idx: int, num_stages: int, m: int) -> List[Tuple[int, str]]:
+    """Standard 1F1B event order for one stage: (microbatch_idx, phase)."""
+    warmup = num_stages - 1 - stage_idx
+    warmup = max(0, min(warmup, m))
+    events: List[Tuple[int, str]] = []
+    f_idx = 0
+    b_idx = 0
+    # Warmup phase: only forwards
+    for _ in range(warmup):
+        events.append((f_idx, "F"))
+        f_idx += 1
+    # 1F1B phase: interleave F and B, but start with B (no extra F before first B)
+    while f_idx < m or b_idx < m:
+        if b_idx < m:
+            events.append((b_idx, "B"))
+            b_idx += 1
+        if f_idx < m:
+            events.append((f_idx, "F"))
+            f_idx += 1
+    return events
+
+
+def pipeline_schedule(m: int, p: int, v: int = 1) -> List[List[Tuple[int, int, str]]]:
+    """Per-device ordered events for 1F1B(+V interleaved).
+
+    S = p*v virtual stages; vstage s lives on device s % p. For each device,
+    round-robin-interleave the standard-1F1B event lists of its v virtual stages.
+    """
+    S = p * v
+    # standard 1F1B order per virtual stage: list of (unit_idx, phase)
+    vstage_orders = [_stage_1f1b_order(s, S, m) for s in range(S)]
+    per_device: List[List[Tuple[int, int, str]]] = [[] for _ in range(p)]
+    for d in range(p):
+        my_vstages = list(range(d, S, p))  # d, d+p, d+2p, ...
+        cursors = {vs: 0 for vs in my_vstages}
+        remaining = sum(len(vstage_orders[vs]) for vs in my_vstages)
+        while remaining > 0:
+            for vs in my_vstages:
+                c = cursors[vs]
+                if c < len(vstage_orders[vs]):
+                    unit_idx, phase = vstage_orders[vs][c]
+                    per_device[d].append((unit_idx, vs, phase))
+                    cursors[vs] = c + 1
+                    remaining -= 1
+    return per_device

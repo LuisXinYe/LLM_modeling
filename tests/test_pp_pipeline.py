@@ -4,7 +4,7 @@ from llm_perf.config import (
     ParallelismConfig, WorkloadConfig, load_hardware_config, load_model_config,
 )
 from llm_perf.builder import _split_stages
-from llm_perf.pp_pipeline import stage_unit_time
+from llm_perf.pp_pipeline import stage_unit_time, pipeline_schedule
 
 CONFIGS = Path(__file__).parent.parent / "configs"
 
@@ -38,3 +38,31 @@ def test_stage_unit_time_cp1_no_ring_overlap_noop(mc, hw):
                                "train_micro_batch_size": 1})
     sim = simulate(build_forward_pass(mc, hw, p1, w1, stage_layers=chunk))
     assert fwd_t == pytest.approx(sim.compute_time + sim.tp_comm_time)
+
+
+def test_schedule_counts_v1():
+    m, p = 6, 4
+    sched = pipeline_schedule(m, p, v=1)
+    assert len(sched) == p
+    for d in range(p):
+        evs = sched[d]
+        # each device runs m forwards and m backwards
+        assert sum(1 for _, _, ph in evs if ph == "F") == m
+        assert sum(1 for _, _, ph in evs if ph == "B") == m
+        # all events on device d belong to vstage d (V=1)
+        assert all(vs == d for _, vs, _ in evs)
+        # 1F1B warmup: device d issues (p-1-d) forwards before its first backward
+        first_b = next(i for i, (_, _, ph) in enumerate(evs) if ph == "B")
+        assert first_b == (p - 1 - d)
+
+
+def test_schedule_counts_v2():
+    m, p, v = 4, 4, 2
+    sched = pipeline_schedule(m, p, v)
+    assert len(sched) == p
+    for d in range(p):
+        evs = sched[d]
+        # v virtual stages per device, each with m F and m B
+        assert sum(1 for _, _, ph in evs if ph == "F") == m * v
+        assert sum(1 for _, _, ph in evs if ph == "B") == m * v
+        assert all(vs % p == d for _, vs, _ in evs)
