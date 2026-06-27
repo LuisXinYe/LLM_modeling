@@ -1,4 +1,4 @@
-from llm_perf.config import HardwareConfig, ModelConfig, WorkloadConfig
+from llm_perf.config import HardwareConfig, ModelConfig, ParallelismConfig, WorkloadConfig
 from llm_perf.post_training import (
     step_time,
     generation_time,
@@ -603,7 +603,7 @@ class LLMPerformanceModel:
 def compare_precision(
     model_cfg: ModelConfig,
     hw: HardwareConfig,
-    parallel_cfg,
+    parallel_cfg: ParallelismConfig,
     rl_cfg: WorkloadConfig,
     recipes: dict,
 ) -> list:
@@ -630,17 +630,23 @@ def compare_precision(
     # Determine baseline recipe key
     baseline_key = "bf16" if "bf16" in recipes else next(iter(recipes))
 
+    # Shared performance model instance for memory accounting (reuses the exact
+    # ZeRO-sharding / offload / activation-recompute path from derive_pretraining).
+    perf_model = LLMPerformanceModel(model_cfg, hw)
+
     # Run simulation for each recipe
     computed = {}
     for name, precision_cfg in recipes.items():
         t_step, train_sim, _bd = pretraining_time(
             model_cfg, hw, parallel_cfg, rl_cfg, precision_cfg=precision_cfg
         )
-        # Rough peak memory: weights (bf16-equivalent) + grad + optimizer + activations
-        # (8× weight bytes is a good rule-of-thumb for mixed-precision Adam)
-        peak_memory_gb = (
-            train_sim.weight_bytes * 8 + train_sim.peak_activation_bytes
-        ) / 1e9
+        # Exact per-device memory: ZeRO-stage-aware weight/grad/optimizer sharding
+        # + retained activation stack (mirrors derive_pretraining lines 401-405).
+        weight_gb, grad_gb, optimizer_gb = perf_model._train_state_gb(
+            train_sim, parallel_cfg
+        )
+        activation_peak_gb = perf_model._train_activation_gb(parallel_cfg, rl_cfg)
+        peak_memory_gb = weight_gb + grad_gb + optimizer_gb + activation_peak_gb
         computed[name] = {
             "t_step": t_step,
             "train_sim": train_sim,
