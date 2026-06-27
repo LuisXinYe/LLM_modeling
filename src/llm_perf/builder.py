@@ -89,6 +89,7 @@ class SimOp:
     output_bytes: float = 0
     comm_bytes: float = 0  # communication volume in bytes (for comm ops)
     consumers: Optional[List[int]] = None
+    fabric: Optional[str] = None  # "nvlink" (intra-node) | "nic" (inter-node) | None for compute
 
 
 # ---------------------------------------------------------------------------

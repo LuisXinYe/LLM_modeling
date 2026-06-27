@@ -7,7 +7,7 @@ has its own clock. Tracks peak activation memory using ref-counting.
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 from llm_perf.builder import SimOp
@@ -33,6 +33,7 @@ class SimResult:
     ep_comm_time: float = 0
     dp_comm_time: float = 0
     cp_comm_time: float = 0
+    exposed_comm_by_fabric: Dict[str, float] = field(default_factory=dict)
 
 
 def simulate(ops: List[SimOp]) -> SimResult:
@@ -85,35 +86,41 @@ def simulate(ops: List[SimOp]) -> SimResult:
     )
 
     # -----------------------------------------------------------------------
-    # 3. Multi-clock simulation
+    # 3. Multi-clock simulation (fabric-aware)
     # -----------------------------------------------------------------------
     stream_clock: Dict[str, float] = defaultdict(float)
-    # 新增：用于统计各流纯执行耗时之和
+    fabric_clock: Dict[str, float] = defaultdict(float)
     stream_durations: Dict[str, float] = defaultdict(float)
+    fabric_durations: Dict[str, float] = defaultdict(float)
     finish_time = [0.0] * n
 
     for idx in topo_order:
         op = ops[idx]
         dep_max = max((finish_time[d] for d in op.depends_on), default=0.0)
-        start = max(stream_clock[op.stream], dep_max)
+        floor = max(stream_clock[op.stream], dep_max)
+        if op.fabric is not None:
+            floor = max(floor, fabric_clock[op.fabric])
+        start = floor
         finish_time[idx] = start + op.duration
         stream_clock[op.stream] = finish_time[idx]
-
-        # 【核心修改】：累加该流下所有 op 的纯执行时间
-        # 即使 compute 包含 100 个 op，这里也会把它们的 duration 全部加在一起
         stream_durations[op.stream] += op.duration
+        if op.fabric is not None:
+            fabric_clock[op.fabric] = finish_time[idx]
+            fabric_durations[op.fabric] += op.duration
 
     wall_clock = max(stream_clock.values()) if stream_clock else 0.0
 
-    # 提取具体的计算和通信时间
-    # 注意：这里的 compute_time 指的是算子在 AI Core 上的总有效执行时间
     compute_time = stream_durations.get("compute", 0.0)
-
-    # 汇总各类通信流的时间
     tp_comm_time = stream_durations.get("tp_comm", 0.0)
     ep_comm_time = stream_durations.get("ep_comm", 0.0)
     dp_comm_time = stream_durations.get("dp_comm", 0.0)
     cp_comm_time = stream_durations.get("cp_comm", 0.0)
+
+    # Exposed comm per fabric = fabric busy-time not hidden under compute.
+    exposed_comm_by_fabric = {
+        fab: max(0.0, busy - compute_time)
+        for fab, busy in fabric_durations.items()
+    }
 
     # -----------------------------------------------------------------------
     # 4. Weight bytes (sum all — builder only sets weight_bytes on fwd ops)
@@ -178,5 +185,6 @@ def simulate(ops: List[SimOp]) -> SimResult:
         tp_comm_time=tp_comm_time,
         ep_comm_time=ep_comm_time,
         dp_comm_time=dp_comm_time,
-        cp_comm_time=cp_comm_time
+        cp_comm_time=cp_comm_time,
+        exposed_comm_by_fabric=exposed_comm_by_fabric,
     )

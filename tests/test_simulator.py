@@ -126,3 +126,44 @@ def test_diamond_dependency():
     ]
     r = simulate(ops)
     assert r.wall_clock_time == pytest.approx(4.0)
+
+
+def test_same_fabric_collectives_serialize():
+    # Two independent NIC collectives (no dep) must time-share the NIC:
+    # wall on nic = sum of durations, not max.
+    ops = [
+        SimOp(name="dp", stream="dp_comm", duration=1.0, depends_on=[], fabric="nic"),
+        SimOp(name="ep", stream="ep_comm", duration=1.0, depends_on=[], fabric="nic"),
+    ]
+    res = simulate(ops)
+    assert res.wall_clock_time == pytest.approx(2.0)
+
+
+def test_different_fabric_collectives_overlap():
+    # NVLink (intra) + NIC (inter), independent → run in parallel.
+    ops = [
+        SimOp(name="tp", stream="tp_comm", duration=1.0, depends_on=[], fabric="nvlink"),
+        SimOp(name="dp", stream="dp_comm", duration=1.0, depends_on=[], fabric="nic"),
+    ]
+    res = simulate(ops)
+    assert res.wall_clock_time == pytest.approx(1.0)
+
+
+def test_comm_still_overlaps_compute():
+    # A NIC collective independent of a compute op overlaps it (fabric != compute).
+    ops = [
+        SimOp(name="bwd", stream="compute", duration=2.0, depends_on=[], fabric=None),
+        SimOp(name="dp", stream="dp_comm", duration=1.0, depends_on=[], fabric="nic"),
+    ]
+    res = simulate(ops)
+    assert res.wall_clock_time == pytest.approx(2.0)  # comm hidden under compute
+
+
+def test_exposed_comm_by_fabric_reported():
+    ops = [
+        SimOp(name="bwd", stream="compute", duration=0.5, depends_on=[], fabric=None),
+        SimOp(name="dp", stream="dp_comm", duration=2.0, depends_on=[], fabric="nic"),
+    ]
+    res = simulate(ops)
+    # 2.0 nic comm, only 0.5 hidden → 1.5 exposed on nic
+    assert res.exposed_comm_by_fabric["nic"] == pytest.approx(1.5)
