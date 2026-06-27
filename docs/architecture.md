@@ -186,11 +186,47 @@ measurement and fitting workflow.
 - **Reward model not modeled.** RL reward computation is outside the cost model.
 - **Optimizer step is a placeholder.** Duration is `param_count * 1e-10`,
   not a roofline-based estimate.
-- **No overlapping communication.** TP/DP comms run on separate streams but
-  cannot overlap with compute in the current simulator (ops are serialized
-  within each stream and dependencies enforce ordering).
 - **EP dispatch is coarse.** MoE AllToAll cost assumes uniform expert routing;
   load imbalance is not modeled.
 - **Activation checkpointing is a flat penalty.** Full recomputation adds 30%
   and attention recomputation adds 5%, rather than re-simulating the DAG with
   checkpointed ops.
+- **Attention projections are bf16-only under low precision.** Attention is a
+  monolithic SimOp (projection + softmax fused), so the quant chain and
+  precision-aware memory sizing apply to FFN GEMMs only; attention stays at
+  bf16 roofline and bf16 bytes.
+
+
+## Communication overlap and fabric contention
+
+Communication is *not* serialized with compute. Each collective runs on its own
+stream (`tp_comm`, `ep_comm`, `dp_comm`, `cp_comm`) with an independent clock, so
+it overlaps compute wherever the DAG permits. In particular, **DP gradient sync
+is bucketed per layer** and issued as soon as that layer's backward finishes
+(depending only on that layer's last backward op), so it overlaps the backward
+compute of earlier layers — matching PyTorch DDP / Megatron gradient bucketing.
+TP/EP collectives sit on the critical path (the next compute op depends on them),
+so they are exposed, as in vanilla tensor/expert parallelism.
+
+Concurrent collectives on the **same physical fabric** share bandwidth: each comm
+op also respects a per-fabric clock (`nvlink` for intra-node groups, `nic` for
+inter-node), so same-fabric transfers time-share (a conservative approximation of
+bandwidth splitting) while NVLink and NIC run independently. `SimResult` reports
+`exposed_comm_by_fabric` — the per-fabric time not hidden under compute — which
+is the primary signal for interconnect sizing.
+
+
+## Low-precision training cost path
+
+`PrecisionConfig` specifies precision per tensor role (weights / activations /
+gradients / comm), each with a dtype, optional fine-grained block size, and an
+optional stochastic Hadamard flag. When a role is below bf16, `builder.py` injects
+a quantize → (Hadamard) → low-precision matmul → dequant chain around the FFN
+GEMM, sizes the resident weight copy by `weights.dtype` and the saved activation
+by `activations.dtype`, and reduces gradient-comm volume (with quantize/dequant
+around the collective). `roofline_time` selects the per-precision peak TFLOPS via
+a `compute_class`. fp32 master weights remain in the optimizer term; error-feedback
+buffers are a separate resident term. With no `PrecisionConfig`, every role
+defaults to `ModelConfig.dtype`, reproducing the single-dtype behavior exactly.
+`model.compare_precision()` runs recipes side by side (step time, speedup, comm
+reduction, exposed comm by fabric, peak memory, feasibility).
