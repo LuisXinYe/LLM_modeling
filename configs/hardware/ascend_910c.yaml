@@ -1,5 +1,9 @@
 name: "Ascend 910C"
 peak_tflops_bf16: 800
+peak_tflops:
+  bf16: 800
+  fp8: 1600
+  fp4: 3200
 hbm_capacity_gb: 128
 hbm_bandwidth_tb_s: 3.2
 hbm_usable_ratio: 0.85

@@ -557,6 +557,41 @@ def test_prefill_attention_no_kv_cache_read():
     assert a.mem_rw == pytest.approx(b.mem_rw)
 
 
+def test_roofline_uses_compute_class_peak():
+    hw = HardwareConfig(
+        name="t", peak_tflops_bf16=100.0,
+        peak_tflops={"bf16": 100.0, "fp8": 200.0, "fp4": 400.0},
+        hbm_capacity_gb=80, hbm_bandwidth_tb_s=3.0,
+    )
+    cost = OpCost(flops=1e12, mem_rw=0)
+    t_bf16 = roofline_time(cost, hw, is_large_gemm=True, compute_class="bf16")
+    t_fp8 = roofline_time(cost, hw, is_large_gemm=True, compute_class="fp8")
+    t_fp4 = roofline_time(cost, hw, is_large_gemm=True, compute_class="fp4")
+    assert t_fp8 == pytest.approx(t_bf16 / 2, rel=1e-6)
+    assert t_fp4 == pytest.approx(t_bf16 / 4, rel=1e-6)
+
+
+def test_roofline_default_compute_class_is_bf16():
+    hw = HardwareConfig(
+        name="t", peak_tflops_bf16=100.0,
+        peak_tflops={"bf16": 100.0, "fp8": 200.0, "fp4": 400.0},
+        hbm_capacity_gb=80, hbm_bandwidth_tb_s=3.0,
+    )
+    cost = OpCost(flops=1e12, mem_rw=0)
+    assert roofline_time(cost, hw, is_large_gemm=True) == pytest.approx(
+        roofline_time(cost, hw, is_large_gemm=True, compute_class="bf16")
+    )
+
+
+def test_tflops_for_missing_class_falls_back_to_bf16():
+    hw = HardwareConfig(
+        name="t", peak_tflops_bf16=100.0,
+        hbm_capacity_gb=80, hbm_bandwidth_tb_s=3.0,
+    )  # no peak_tflops given
+    assert hw.tflops_for("fp8") == 100.0  # conservative fallback
+    assert hw.tflops_for("bf16") == 100.0
+
+
 def test_dsa_decode_models_decoupled_rope():
     """DSA decode must model the MLA-style decoupled RoPE: rope projection in
     weight + FLOPs, and the rope key (∝ rope_dim) in the KV-cache read."""

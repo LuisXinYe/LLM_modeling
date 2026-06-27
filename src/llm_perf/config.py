@@ -159,7 +159,24 @@ class HardwareConfig(BaseModel):
     inter_node_latency_us: float = 5
     devices_per_node: int = 8
     cpu_gpu_bw_gb_s: float = 32.0  # CPU↔GPU PCIe/NVLink bandwidth in GB/s
+    peak_tflops: dict[str, float] = {}  # {"bf16":…, "fp8":…, "fp4":…}; bf16 mirrored from peak_tflops_bf16 if absent
     calibration: CalibrationConfig = CalibrationConfig()
+
+    def model_post_init(self, __context) -> None:
+        # Always mirror the legacy scalar into the dict so callers can use either.
+        self.peak_tflops.setdefault("bf16", self.peak_tflops_bf16)
+
+    def tflops_for(self, compute_class: str) -> float:
+        """Peak TFLOPS for a compute class; falls back to bf16 peak if absent."""
+        if compute_class in self.peak_tflops:
+            return self.peak_tflops[compute_class]
+        import warnings
+        warnings.warn(
+            f"peak_tflops['{compute_class}'] missing; falling back to bf16 peak "
+            f"(no low-precision speedup credited)",
+            stacklevel=2,
+        )
+        return self.peak_tflops_bf16
 
     @property
     def usable_hbm_gb(self) -> float:

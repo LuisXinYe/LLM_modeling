@@ -22,19 +22,22 @@ class OpCost:
 
 
 def roofline_time(
-    cost: OpCost, hw: HardwareConfig, is_large_gemm: bool = True
+    cost: OpCost, hw: HardwareConfig, is_large_gemm: bool = True,
+    compute_class: str = "bf16",
 ) -> float:
     """Roofline model: time = max(compute_time, memory_time).
 
-    Uses two-tier calibration: large GEMM vs small ops.
+    Uses two-tier calibration (large GEMM vs small ops) and per-precision peak
+    TFLOPS selected by compute_class ("bf16"|"fp8"|"fp4").
     """
     eff = (
         hw.calibration.compute_eff_large_gemm
         if is_large_gemm
         else hw.calibration.compute_eff_small_op
     )
+    peak = hw.tflops_for(compute_class)
     compute_time = (
-        cost.flops / (hw.peak_tflops_bf16 * 1e12 * eff) if cost.flops > 0 else 0
+        cost.flops / (peak * 1e12 * eff) if cost.flops > 0 else 0
     )
     memory_time = (
         cost.mem_rw / (hw.hbm_bandwidth_tb_s * 1e12 * hw.calibration.memory_efficiency)
