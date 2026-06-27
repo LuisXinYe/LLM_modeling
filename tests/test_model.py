@@ -15,6 +15,7 @@ from llm_perf.config import (
     load_model_config,
 )
 from llm_perf.model import LLMPerformanceModel
+from llm_perf.precision import PrecisionConfig, TensorPrecision
 from llm_perf.report import TargetReport, format_json, format_table
 
 CONFIGS_DIR = Path(__file__).parent.parent / "configs"
@@ -363,3 +364,55 @@ def test_gpipe_holds_more_activation_than_1f1b(perf_model):
     a_1f1b, a_gpipe, a_zb = act("1f1b"), act("gpipe"), act("zero_bubble")
     assert a_gpipe == pytest.approx(a_1f1b * 8, rel=0.01)
     assert a_zb == pytest.approx(a_1f1b)
+
+
+# ---------------------------------------------------------------------------
+# Test: periodic high-precision step blending
+# ---------------------------------------------------------------------------
+
+
+def test_periodic_high_precision_blends_step_time(model_cfg, hw):
+    """With high_precision_period=N=4, blended step time == 0.75*t_low + 0.25*t_high.
+
+    Uses the existing fixture model+hw. Builds three precision configs:
+      - fp8_low: fp8 weights, no periodic override (high_precision_period=0)
+      - bf16_high: all-bf16 (high_precision_dtype default)
+      - fp8_blend: fp8 weights with high_precision_period=4
+
+    Asserts the blended step time matches the linear combination exactly.
+    """
+    perf_model = LLMPerformanceModel(model_cfg, hw)
+
+    rl = WorkloadConfig(
+        total_prompts=8,
+        group_size=2,
+        avg_prompt_len=256,
+        avg_response_len=256,
+        train_micro_batch_size=1,
+        gen_batch_size=4,
+    )
+    train_parallel = ParallelismConfig(tp=1, pp=1, dp=1)
+
+    # Low-precision config: fp8 weights, no period override
+    fp8_low = PrecisionConfig(weights=TensorPrecision(dtype="fp8_e4m3"))
+    # High-precision config: all-bf16 (the high_precision_dtype default)
+    bf16_high = PrecisionConfig()  # all bf16 = bf16_default
+    # Blend config: fp8 with high_precision_period=4
+    fp8_blend = PrecisionConfig(
+        weights=TensorPrecision(dtype="fp8_e4m3"),
+        high_precision_period=4,
+        high_precision_dtype="bf16",
+    )
+
+    t_low = perf_model.derive_pretraining(1, rl, train_parallel, precision_cfg=fp8_low)[
+        "step_time_seconds"
+    ]
+    t_high = perf_model.derive_pretraining(1, rl, train_parallel, precision_cfg=bf16_high)[
+        "step_time_seconds"
+    ]
+    t_blend = perf_model.derive_pretraining(1, rl, train_parallel, precision_cfg=fp8_blend)[
+        "step_time_seconds"
+    ]
+
+    # N=4 → weight = (1 - 1/4) = 0.75 low + 0.25 high
+    assert t_blend == pytest.approx(0.75 * t_low + 0.25 * t_high, rel=1e-3)

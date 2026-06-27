@@ -375,11 +375,15 @@ class LLMPerformanceModel:
             "gen_feasible": total_gen_gb < usable,
         }
 
-    def derive_pretraining(self, total_devices, rl_cfg, train_parallel):
+    def derive_pretraining(self, total_devices, rl_cfg, train_parallel, precision_cfg=None):
         """Pretraining-only modeling: one fwd+bwd+optimizer step, no RL.
 
         Returns a dict with step time, throughput, the training-step
         breakdown, and the training memory footprint.
+
+        Args:
+            precision_cfg: Optional PrecisionConfig. When high_precision_period > 0,
+                the step time is a blended estimate across low/high-precision steps.
         """
         if train_parallel.total_devices > total_devices:
             raise ValueError(
@@ -388,7 +392,7 @@ class LLMPerformanceModel:
             )
 
         t_step, train_sim, bd = pretraining_time(
-            self.model, self.hw, train_parallel, rl_cfg
+            self.model, self.hw, train_parallel, rl_cfg, precision_cfg=precision_cfg
         )
 
         weight_gb, grad_gb, optimizer_gb = self._train_state_gb(

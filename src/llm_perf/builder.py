@@ -171,14 +171,23 @@ def _inject_quant_chain(
     hw: HardwareConfig,
     index_offset: int,
     dep_idx: Optional[int],
+    component_name: str = "",
 ) -> int:
     """Prepend quantize(+hadamard) and append dequant around gemm_op.
 
     Returns the global index of the dequant op (the new chain tail). When the
     activation compute_class is bf16 (no low precision), appends gemm_op as-is
     and returns its index.
+
+    When component_name is in pc.high_precision_layers, the component uses the
+    high-precision dtype path (bf16 branch) even if activations are low-precision.
     """
     act = pc.activations
+    # High-precision layer override: skip quant chain for this component
+    if component_name and component_name in pc.high_precision_layers:
+        gemm_op.depends_on = [dep_idx] if dep_idx is not None else []
+        result.append(gemm_op)
+        return index_offset + len(result) - 1
     if _compute_class(act.dtype) == "bf16":
         gemm_op.depends_on = [dep_idx] if dep_idx is not None else []
         result.append(gemm_op)
@@ -570,6 +579,7 @@ def build_layer_ops(
             hw=hw,
             index_offset=index_offset,
             dep_idx=_idx(last_compute_local),
+            component_name="ffn",
         )
         last_compute_local = tail_idx - index_offset
 
@@ -636,6 +646,7 @@ def build_layer_ops(
             hw=hw,
             index_offset=index_offset,
             dep_idx=_idx(last_compute_local),
+            component_name="ffn",
         )
         last_compute_local = tail_idx - index_offset
 
@@ -1151,6 +1162,30 @@ def build_training_step(
         output_bytes=0,
     )
     all_ops.append(optim_op)
+
+    # ------ Error-feedback buffers + compensation add ---------------------------
+    # When error_feedback=True and weights are low-precision (not bf16), each
+    # param has a persistent EF buffer in ef_dtype to accumulate quantization
+    # error across steps. Also inject one compensation_add op per step.
+    if pc.error_feedback and _compute_class(pc.weights.dtype) != "bf16":
+        ef_buf = SimOp(
+            name="ef_buffer",
+            stream="compute",
+            duration=0.0,
+            weight_bytes=param_count * _prec_dtype_bytes(pc.ef_dtype),
+            output_bytes=0,
+        )
+        all_ops.append(ef_buf)
+
+        comp_cost = ops.op_compensation_add(param_count, pc.ef_dtype)
+        comp_op = SimOp(
+            name="compensation_add",
+            stream="compute",
+            duration=ops.roofline_time(comp_cost, hw, is_large_gemm=False),
+            weight_bytes=0,
+            output_bytes=0,
+        )
+        all_ops.append(comp_op)
 
     return all_ops
 

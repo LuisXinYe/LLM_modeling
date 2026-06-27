@@ -8,6 +8,7 @@ post_training.rl_training_time().
 """
 
 from llm_perf.builder import build_training_step
+from llm_perf.precision import PrecisionConfig, TensorPrecision
 from llm_perf.report import TrainBreakdown
 from llm_perf._stage_utils import (
     _simulate_slowest_stage,
@@ -17,7 +18,29 @@ from llm_perf._stage_utils import (
 )
 
 
-def pretraining_time(model_cfg, hw, parallel_cfg, rl_cfg):
+def _make_all_high_precision(pc: PrecisionConfig) -> PrecisionConfig:
+    """Build a PrecisionConfig with all tensor roles set to pc.high_precision_dtype.
+
+    Used for the high-precision step in periodic high-precision blending.
+    Sets high_precision_period=0 to prevent recursion, and disables
+    error_feedback (not needed in full-precision steps).
+    """
+    hp_tp = TensorPrecision(dtype=pc.high_precision_dtype)
+    return PrecisionConfig(
+        weights=hp_tp,
+        activations=hp_tp,
+        gradients=hp_tp,
+        comm=hp_tp,
+        master_dtype=pc.master_dtype,
+        error_feedback=False,
+        ef_dtype=pc.ef_dtype,
+        high_precision_layers=[],
+        high_precision_period=0,
+        high_precision_dtype=pc.high_precision_dtype,
+    )
+
+
+def pretraining_time(model_cfg, hw, parallel_cfg, rl_cfg, precision_cfg=None):
     """Single training step time (fwd+bwd+optimizer). Returns (t_step, sim_result, TrainBreakdown).
 
     Models a generic training step:
@@ -33,14 +56,46 @@ def pretraining_time(model_cfg, hw, parallel_cfg, rl_cfg):
     pretraining. RL-specific fields (reward_model, group_size, etc.)
     are ignored by this function.
 
+    When precision_cfg.high_precision_period=N > 0, returns a blended step
+    time: (1 - 1/N)*t_low + (1/N)*t_high, where t_low uses the given
+    precision_cfg (with period=0) and t_high uses all roles set to
+    high_precision_dtype. The sim_result comes from the low-precision run.
+
     Returns:
         (t_step, sim_result, TrainBreakdown) where TrainBreakdown.reward_fwd
         and old_logprob_fwd are always 0.
     """
+    pc = precision_cfg or PrecisionConfig.bf16_default()
+
+    # --- Periodic high-precision blending ---
+    if pc.high_precision_period > 0:
+        N = pc.high_precision_period
+        # Low-precision step: same config but with period disabled (prevents recursion)
+        pc_low = pc.model_copy(update={"high_precision_period": 0})
+        t_low, train_sim_low, bd_low = pretraining_time(
+            model_cfg, hw, parallel_cfg, rl_cfg, precision_cfg=pc_low
+        )
+        # High-precision step: all roles set to high_precision_dtype
+        pc_high = _make_all_high_precision(pc)
+        t_high, _, _ = pretraining_time(
+            model_cfg, hw, parallel_cfg, rl_cfg, precision_cfg=pc_high
+        )
+        t_blend = (1 - 1 / N) * t_low + (1 / N) * t_high
+        # Return blended time; use low-precision sim for memory accounting
+        bd_blend = TrainBreakdown(
+            reward_fwd=0.0,
+            old_logprob_fwd=0.0,
+            policy_update=bd_low.policy_update,
+            pp_bubble=bd_low.pp_bubble,
+            recompute=bd_low.recompute,
+            optim_offload=bd_low.optim_offload,
+            total=t_blend,
+        )
+        return t_blend, train_sim_low, bd_blend
 
     # --- 1. LLM forward+backward ---
     t_policy_update, train_sim = _simulate_slowest_stage(
-        build_training_step, model_cfg, hw, parallel_cfg, rl_cfg
+        build_training_step, model_cfg, hw, parallel_cfg, rl_cfg, precision_cfg=pc
     )
 
     # --- 2. Optimizer offload ---

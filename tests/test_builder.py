@@ -597,3 +597,28 @@ def test_fp8_comm_halves_dp_grad_bytes_and_adds_quant():
     assert dp_bytes_fp8 == pytest.approx(dp_bytes_bf16 / 2, rel=1e-6)
     assert any(o.name.startswith("quantize_grad") for o in ops_fp8)
     assert any(o.name.startswith("dequant_grad") for o in ops_fp8)
+
+
+# ---------------------------------------------------------------------------
+# Test: error-feedback buffer memory and compensation_add op
+# ---------------------------------------------------------------------------
+
+
+def test_error_feedback_adds_buffer_and_compensation_op():
+    model = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+    pc = ParallelismConfig(tp=1, dp=1)
+    rl = WorkloadConfig(total_prompts=8, group_size=2, train_micro_batch_size=1)
+    no_ef = PrecisionConfig(weights=TensorPrecision(dtype="fp8_e4m3"))
+    with_ef = PrecisionConfig(
+        weights=TensorPrecision(dtype="fp8_e4m3"),
+        error_feedback=True,
+        ef_dtype="fp16",
+    )
+    w_no = sum(o.weight_bytes for o in build_training_step(model, hw, pc, rl, precision_cfg=no_ef))
+    w_ef = sum(o.weight_bytes for o in build_training_step(model, hw, pc, rl, precision_cfg=with_ef))
+    assert w_ef > w_no
+    assert any(
+        o.name.startswith("compensation_add")
+        for o in build_training_step(model, hw, pc, rl, precision_cfg=with_ef)
+    )
