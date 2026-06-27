@@ -19,6 +19,7 @@ from llm_perf.config import (
     Phase,
     WorkloadConfig,
 )
+from llm_perf.precision import PrecisionConfig, compute_class as _compute_class
 
 
 def _split_stages(
@@ -152,6 +153,80 @@ def _build_tp_comm(
 
 
 # ---------------------------------------------------------------------------
+# _inject_quant_chain
+# ---------------------------------------------------------------------------
+
+
+def _inject_quant_chain(
+    result: List[SimOp],
+    gemm_op: SimOp,
+    numel: float,
+    tokens: float,
+    d: int,
+    pc: PrecisionConfig,
+    hw: HardwareConfig,
+    index_offset: int,
+    dep_idx: Optional[int],
+) -> int:
+    """Prepend quantize(+hadamard) and append dequant around gemm_op.
+
+    Returns the global index of the dequant op (the new chain tail). When the
+    activation compute_class is bf16 (no low precision), appends gemm_op as-is
+    and returns its index.
+    """
+    act = pc.activations
+    if _compute_class(act.dtype) == "bf16":
+        gemm_op.depends_on = [dep_idx] if dep_idx is not None else []
+        result.append(gemm_op)
+        return index_offset + len(result) - 1
+
+    prev = dep_idx
+    q = SimOp(
+        name="quantize_act",
+        stream="compute",
+        duration=ops.roofline_time(
+            ops.op_quantize(numel, "bf16", act.dtype, act.block_size, act.scale_bytes),
+            hw,
+            is_large_gemm=False,
+        ),
+        depends_on=[prev] if prev is not None else [],
+    )
+    result.append(q)
+    prev = index_offset + len(result) - 1
+
+    if act.hadamard:
+        h = SimOp(
+            name="hadamard_act",
+            stream="compute",
+            duration=ops.roofline_time(
+                ops.op_hadamard(tokens, d, act.hadamard_block),
+                hw,
+                is_large_gemm=False,
+            ),
+            depends_on=[prev],
+        )
+        result.append(h)
+        prev = index_offset + len(result) - 1
+
+    gemm_op.depends_on = [prev]
+    result.append(gemm_op)
+    prev = index_offset + len(result) - 1
+
+    dq = SimOp(
+        name="dequant_out",
+        stream="compute",
+        duration=ops.roofline_time(
+            ops.op_dequant(numel, act.dtype, "bf16", act.block_size, act.scale_bytes),
+            hw,
+            is_large_gemm=False,
+        ),
+        depends_on=[prev],
+    )
+    result.append(dq)
+    return index_offset + len(result) - 1
+
+
+# ---------------------------------------------------------------------------
 # build_layer_ops
 # ---------------------------------------------------------------------------
 
@@ -166,6 +241,7 @@ def build_layer_ops(
     phase: Phase,
     kv_len: Optional[int] = None,
     index_offset: int = 0,
+    precision_cfg: Optional[PrecisionConfig] = None,
 ) -> List[SimOp]:
     """Build SimOps for one transformer layer.
 
@@ -174,7 +250,11 @@ def build_layer_ops(
     index_offset:
         Global index of the first op returned (used so depends_on indices are
         globally consistent when ops from multiple layers are concatenated).
+    precision_cfg:
+        Precision configuration. None resolves to PrecisionConfig.bf16_default(),
+        which reproduces legacy single-dtype behavior.
     """
+    pc = precision_cfg or PrecisionConfig.bf16_default()
     tp = parallel_cfg.tp
     ep = parallel_cfg.ep
     cp = parallel_cfg.cp
@@ -468,13 +548,26 @@ def build_layer_ops(
         ffn_op = SimOp(
             name="ffn_swiglu",
             stream="compute",
-            duration=ops.roofline_time(ffn_cost, hw, is_large_gemm=True),
-            depends_on=[_idx(last_compute_local)],
+            duration=ops.roofline_time(
+                ffn_cost, hw, is_large_gemm=True,
+                compute_class=_compute_class(pc.activations.dtype),
+            ),
+            depends_on=[],  # set by _inject_quant_chain
             weight_bytes=ffn_cost.weight_bytes,
             output_bytes=ffn_cost.output_bytes,
         )
-        result.append(ffn_op)
-        last_compute_local = len(result) - 1
+        tail_idx = _inject_quant_chain(
+            result=result,
+            gemm_op=ffn_op,
+            numel=batch_tokens * d,
+            tokens=batch_tokens,
+            d=d,
+            pc=pc,
+            hw=hw,
+            index_offset=index_offset,
+            dep_idx=_idx(last_compute_local),
+        )
+        last_compute_local = tail_idx - index_offset
 
     elif ffn_type == "MoE":
         ep_num_experts = max(1, layer_cfg.num_experts // ep)
@@ -521,13 +614,26 @@ def build_layer_ops(
         ffn_op = SimOp(
             name="ffn_moe",
             stream="compute",
-            duration=ops.roofline_time(ffn_cost, hw, is_large_gemm=True),
-            depends_on=[_idx(last_compute_local)],
+            duration=ops.roofline_time(
+                ffn_cost, hw, is_large_gemm=True,
+                compute_class=_compute_class(pc.activations.dtype),
+            ),
+            depends_on=[],  # set by _inject_quant_chain
             weight_bytes=ffn_cost.weight_bytes,
             output_bytes=ffn_cost.output_bytes,
         )
-        result.append(ffn_op)
-        last_compute_local = len(result) - 1
+        tail_idx = _inject_quant_chain(
+            result=result,
+            gemm_op=ffn_op,
+            numel=batch_tokens * d,
+            tokens=batch_tokens,
+            d=d,
+            pc=pc,
+            hw=hw,
+            index_offset=index_offset,
+            dep_idx=_idx(last_compute_local),
+        )
+        last_compute_local = tail_idx - index_offset
 
         # EP AllToAll combine: gather expert outputs back to original EP ranks
         if ep > 1:
@@ -820,12 +926,16 @@ def build_training_step(
     parallel_cfg: ParallelismConfig,
     rl_cfg: WorkloadConfig,
     stage_layers: Optional[List[LayerConfig]] = None,
+    precision_cfg: Optional[PrecisionConfig] = None,
 ) -> List[SimOp]:
     """Build SimOps for one full training micro-step (forward + backward + DP sync + optim).
 
     Parameters
     ----------
     stage_layers: Optional per-stage layer list. If None, uses _split_stages()[0].
+    precision_cfg:
+        Precision configuration. None resolves to PrecisionConfig.bf16_default(),
+        which reproduces legacy single-dtype behavior.
     """
     all_layers = model_cfg.get_layers()
     _validate_parallelism(all_layers, parallel_cfg)
@@ -859,6 +969,7 @@ def build_training_step(
             seq_len=seq_len,
             phase=Phase.TRAIN_FWD,
             index_offset=offset,
+            precision_cfg=precision_cfg,
         )
         # Chain: first op of this layer depends on last op of previous layer
         if prev_dep is not None and layer_ops:
@@ -931,6 +1042,7 @@ def build_training_step(
             seq_len=seq_len,
             phase=Phase.TRAIN_BWD,
             index_offset=offset,
+            precision_cfg=precision_cfg,
         )
         if prev_dep is not None and layer_ops:
             layer_ops[0].depends_on = [prev_dep]

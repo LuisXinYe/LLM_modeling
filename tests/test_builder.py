@@ -17,6 +17,7 @@ from llm_perf.config import (
     load_hardware_config,
     load_model_config,
 )
+from llm_perf.precision import PrecisionConfig, TensorPrecision
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -539,3 +540,36 @@ def test_comm_ops_are_fabric_tagged():
     assert all(o.fabric in ("nvlink", "nic") for o in comm_ops)
     dp_ops = [o for o in ops if o.stream == "dp_comm"]
     assert dp_ops and all(o.fabric == "nic" for o in dp_ops)  # dp=16 inter-node
+
+
+# ---------------------------------------------------------------------------
+# Test: low-precision quant chain injection
+# ---------------------------------------------------------------------------
+
+
+def _fp8_precision():
+    return PrecisionConfig(
+        weights=TensorPrecision(dtype="fp8_e4m3", block_size=128),
+        activations=TensorPrecision(dtype="fp8_e4m3", block_size=128, hadamard=True, hadamard_block=128),
+    )
+
+
+def test_lowprec_gemm_injects_quant_chain():
+    model = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+    pc = ParallelismConfig(tp=1, dp=1)
+    rl = WorkloadConfig(total_prompts=8, group_size=2, train_micro_batch_size=1)
+    ops = build_training_step(model, hw, pc, rl, precision_cfg=_fp8_precision())
+    names = [o.name for o in ops]
+    assert any(n.startswith("quantize") for n in names)
+    assert any(n.startswith("hadamard") for n in names)
+    assert any(n.startswith("dequant") for n in names)
+
+
+def test_bf16_default_injects_no_quant_ops():
+    model = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+    pc = ParallelismConfig(tp=1, dp=1)
+    rl = WorkloadConfig(total_prompts=8, group_size=2, train_micro_batch_size=1)
+    ops_default = build_training_step(model, hw, pc, rl)  # no precision_cfg
+    assert not any(o.name.startswith(("quantize", "hadamard", "dequant")) for o in ops_default)
