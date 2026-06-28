@@ -693,6 +693,7 @@ def op_moe_ffn(
     top_k: int,
     batch_tokens: int,
     phase: Phase,
+    imbalance_factor: float = 1.0,
     dtype_bytes: int = 2,
     weight_dtype_bytes: float | None = None,
     act_dtype_bytes: float | None = None,
@@ -702,10 +703,17 @@ def op_moe_ffn(
     weight_dtype_bytes / act_dtype_bytes size the resident weight copy and the
     saved activation for low-precision training; mem_rw (roofline traffic) keeps
     the compute dtype. Both default to dtype_bytes.
+
+    imbalance_factor scales routed-expert FLOPs to model the hottest EP rank
+    doing more expert compute (>= 1.0; 1.0 = balanced). Weights and activation
+    memory are unaffected. Ref: DeepSeek-V3 §2.1 (expert load balancing).
     """
     w_bytes = dtype_bytes if weight_dtype_bytes is None else weight_dtype_bytes
     a_bytes = dtype_bytes if act_dtype_bytes is None else act_dtype_bytes
-    routed_flops = 6 * hidden_size * expert_intermediate_size * top_k * batch_tokens
+    routed_flops = (
+        6 * hidden_size * expert_intermediate_size * top_k * batch_tokens
+        * imbalance_factor
+    )
     shared_flops = (
         6 * hidden_size * shared_intermediate_size * num_shared_experts * batch_tokens
         if num_shared_experts > 0
@@ -1006,6 +1014,59 @@ def op_alltoall_combine(
     """
     comm_b = tokens * top_k * hidden_size * dtype_bytes
     return OpCost(comm_bytes=comm_b)
+
+
+def op_alltoall_dispatch_hierarchical(
+    tokens: int,
+    hidden_size: int,
+    top_k: int,
+    node_limit: int,
+    nodes_in_ep: int,
+    imbalance_factor: float = 1.0,
+    dtype_bytes: int = 2,
+) -> tuple[float, float]:
+    """Node-limited MoE dispatch, split into (inter_node_bytes, intra_node_bytes).
+
+    Each token's top_k experts are constrained to at most `node_limit` distinct
+    nodes (DeepSeek-V3 node-limited routing). The token payload crosses the
+    network once per distinct destination node; experts co-located on an already-
+    reached node are served by an intra-node (NVLink/HCCS) copy.
+
+    distinct_dest_nodes = min(top_k, node_limit, nodes_in_ep)
+      inter_bytes = tokens * distinct_dest_nodes        * hidden * bytes * imbalance
+      intra_bytes = tokens * (top_k - distinct_dest_nodes) * hidden * bytes * imbalance
+
+    Conservative for network sizing: every distinct destination node is counted as
+    remote (the source-local node is not subtracted), upper-bounding cross-node
+    demand. Total inter+intra always equals the flat top_k traffic. Ref: DeepSeek-V3.
+    """
+    distinct_dest_nodes = min(top_k, node_limit, nodes_in_ep)
+    inter_experts = distinct_dest_nodes
+    intra_experts = top_k - distinct_dest_nodes
+    per = tokens * hidden_size * dtype_bytes * imbalance_factor
+    return (inter_experts * per, intra_experts * per)
+
+
+def op_alltoall_combine_hierarchical(
+    tokens: int,
+    hidden_size: int,
+    top_k: int,
+    node_limit: int,
+    nodes_in_ep: int,
+    imbalance_factor: float = 1.0,
+    dtype_bytes: int = 2,
+) -> tuple[float, float]:
+    """Node-limited MoE combine. Symmetric to dispatch; see
+    op_alltoall_dispatch_hierarchical. Ref: DeepSeek-V3."""
+    return op_alltoall_dispatch_hierarchical(
+        tokens=tokens,
+        hidden_size=hidden_size,
+        top_k=top_k,
+        node_limit=node_limit,
+        nodes_in_ep=nodes_in_ep,
+        imbalance_factor=imbalance_factor,
+        dtype_bytes=dtype_bytes,
+    )
 
 
 def op_alltoall(

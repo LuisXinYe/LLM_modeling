@@ -656,3 +656,67 @@ def test_compensation_add_is_elementwise_memory():
     # read EF buffer + read grad + write EF buffer = 3 * numel * 2B
     assert cost.mem_rw == pytest.approx(3 * 2048 * 2)
     assert cost.weight_bytes == 0
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical all-to-all and imbalance-aware MoE FFN
+# ---------------------------------------------------------------------------
+
+
+def test_alltoall_hierarchical_conserves_total_bytes():
+    from llm_perf import ops
+    tokens, hidden, top_k = 4096, 4096, 8
+    nodes_in_ep, node_limit = 8, 3
+    inter, intra = ops.op_alltoall_dispatch_hierarchical(
+        tokens=tokens, hidden_size=hidden, top_k=top_k,
+        node_limit=node_limit, nodes_in_ep=nodes_in_ep, dtype_bytes=2,
+    )
+    flat = tokens * top_k * hidden * 2
+    # distinct dest nodes = min(top_k, node_limit, nodes_in_ep) = 3
+    assert inter == tokens * 3 * hidden * 2
+    assert intra == tokens * (top_k - 3) * hidden * 2
+    assert inter + intra == flat  # co-location only moves bytes between fabrics
+
+
+def test_alltoall_hierarchical_smaller_node_limit_cuts_inter():
+    from llm_perf import ops
+    tokens, hidden, top_k, nodes_in_ep = 4096, 4096, 8, 8
+    inter_m4, _ = ops.op_alltoall_dispatch_hierarchical(
+        tokens, hidden, top_k, node_limit=4, nodes_in_ep=nodes_in_ep)
+    inter_m2, _ = ops.op_alltoall_dispatch_hierarchical(
+        tokens, hidden, top_k, node_limit=2, nodes_in_ep=nodes_in_ep)
+    assert inter_m2 < inter_m4  # tighter node limit → less cross-node traffic
+
+
+def test_alltoall_hierarchical_imbalance_scales_both():
+    from llm_perf import ops
+    base = ops.op_alltoall_dispatch_hierarchical(
+        4096, 4096, 8, node_limit=3, nodes_in_ep=8, imbalance_factor=1.0)
+    hot = ops.op_alltoall_dispatch_hierarchical(
+        4096, 4096, 8, node_limit=3, nodes_in_ep=8, imbalance_factor=1.5)
+    assert hot[0] == base[0] * 1.5
+    assert hot[1] == base[1] * 1.5
+
+
+def test_alltoall_combine_hierarchical_matches_dispatch():
+    from llm_perf import ops
+    args = dict(tokens=4096, hidden_size=4096, top_k=8, node_limit=3, nodes_in_ep=8)
+    assert ops.op_alltoall_combine_hierarchical(**args) == \
+        ops.op_alltoall_dispatch_hierarchical(**args)
+
+
+def test_moe_ffn_imbalance_scales_routed_flops_only():
+    from llm_perf import ops
+    from llm_perf.config import Phase
+    base = ops.op_moe_ffn(
+        hidden_size=4096, expert_intermediate_size=2048, num_experts=32,
+        num_shared_experts=1, shared_intermediate_size=2048, top_k=8,
+        batch_tokens=4096, phase=Phase.TRAIN_FWD, imbalance_factor=1.0)
+    hot = ops.op_moe_ffn(
+        hidden_size=4096, expert_intermediate_size=2048, num_experts=32,
+        num_shared_experts=1, shared_intermediate_size=2048, top_k=8,
+        batch_tokens=4096, phase=Phase.TRAIN_FWD, imbalance_factor=1.5)
+    # routed flops grow with imbalance; weights/activation memory unchanged
+    assert hot.flops > base.flops
+    assert hot.weight_bytes == base.weight_bytes
+    assert hot.output_bytes == base.output_bytes
