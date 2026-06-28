@@ -1,4 +1,9 @@
-from llm_perf.config import HardwareConfig, ModelConfig, ParallelismConfig, WorkloadConfig
+from llm_perf.config import (
+    HardwareConfig,
+    ModelConfig,
+    ParallelismConfig,
+    WorkloadConfig,
+)
 from llm_perf.post_training import (
     step_time,
     generation_time,
@@ -57,15 +62,11 @@ class LLMPerformanceModel:
                 )
 
         # Compute generation and training times
-        gen_sim, t_gen = generation_time(
-            self.model, self.hw, gen_parallel, rl_cfg
-        )
+        gen_sim, t_gen = generation_time(self.model, self.hw, gen_parallel, rl_cfg)
         t_train, train_sim, step_bd = training_time(
             self.model, self.hw, train_parallel, rl_cfg
         )
-        t_ref, ref_sim = ref_time(
-            self.model, self.hw, ref_parallel, rl_cfg
-        )
+        t_ref, ref_sim = ref_time(self.model, self.hw, ref_parallel, rl_cfg)
 
         # Resharding time: phases run serially on the shared device pool
         # (gen → ref → train); when the parallelism layout changes between
@@ -83,19 +84,45 @@ class LLMPerformanceModel:
         # Compute TPS targets (single-rank perspective)
         # Each rank processes local_seq_len = seq_len / cp tokens due to CP.
         avg_tokens = rl_cfg.avg_prompt_len + rl_cfg.avg_response_len
-        train_local_tokens = avg_tokens / train_parallel.cp if train_parallel.cp > 1 else avg_tokens
-        ref_local_tokens = avg_tokens / ref_parallel.cp if ref_parallel.cp > 1 else avg_tokens
+        train_local_tokens = (
+            avg_tokens / train_parallel.cp if train_parallel.cp > 1 else avg_tokens
+        )
+        ref_local_tokens = (
+            avg_tokens / ref_parallel.cp if ref_parallel.cp > 1 else avg_tokens
+        )
 
-        gen_tps = rl_cfg.gen_batch_size * rl_cfg.avg_response_len / t_gen if t_gen > 0 else 0
-        train_tps = rl_cfg.train_batch_size * train_local_tokens / t_train if t_train > 0 else 0
-        ref_tps = rl_cfg.train_batch_size * rl_cfg.group_size / ref_parallel.dp * ref_local_tokens / t_ref if t_ref > 0 else 0
+        gen_tps = (
+            rl_cfg.gen_batch_size * rl_cfg.avg_response_len / t_gen if t_gen > 0 else 0
+        )
+        train_tps = (
+            rl_cfg.train_batch_size * train_local_tokens / t_train if t_train > 0 else 0
+        )
+        ref_tps = (
+            rl_cfg.train_batch_size
+            * rl_cfg.group_size
+            / ref_parallel.dp
+            * ref_local_tokens
+            / t_ref
+            if t_ref > 0
+            else 0
+        )
         gen_sps = rl_cfg.gen_batch_size / t_gen if t_gen > 0 else 0
         train_sps = rl_cfg.train_batch_size / t_train if t_train > 0 else 0
-        ref_sps = rl_cfg.train_batch_size * rl_cfg.gen_batch_size / ref_parallel.dp / t_ref if t_ref > 0 else 0
+        ref_sps = (
+            rl_cfg.train_batch_size * rl_cfg.gen_batch_size / ref_parallel.dp / t_ref
+            if t_ref > 0
+            else 0
+        )
 
         # Memory profile
         memory = self._compute_memory_profile(
-            train_sim, gen_sim, ref_sim, train_parallel, gen_parallel, ref_parallel, rl_cfg
+            train_sim,
+            gen_sim,
+            ref_sim,
+            train_parallel,
+            gen_parallel,
+            ref_parallel,
+            rl_cfg,
         )
 
         feasible = memory.train_feasible and memory.gen_feasible and memory.ref_feasible
@@ -151,8 +178,11 @@ class LLMPerformanceModel:
         if mtp_depth <= 0:
             return 0.0
         return (
-            mtp_depth * self.model.hidden_size * self.model.vocab_size
-            * self.model.dtype_bytes / 1e9
+            mtp_depth
+            * self.model.hidden_size
+            * self.model.vocab_size
+            * self.model.dtype_bytes
+            / 1e9
         )
 
     def _train_state_gb(self, train_sim, train_parallel):
@@ -241,16 +271,19 @@ class LLMPerformanceModel:
                 keep = batch * local_seq * d * self.model.dtype_bytes
             else:
                 fwd_ops = build_layer_ops(
-                    layer_cfg=layer, model_cfg=self.model, parallel_cfg=p,
-                    hw=self.hw, batch=batch, seq_len=seq_len,
+                    layer_cfg=layer,
+                    model_cfg=self.model,
+                    parallel_cfg=p,
+                    hw=self.hw,
+                    batch=batch,
+                    seq_len=seq_len,
                     phase=Phase.TRAIN_FWD,
                 )
-                keep = sum(
-                    op.output_bytes for op in fwd_ops if op.stream == "compute"
-                )
+                keep = sum(op.output_bytes for op in fwd_ops if op.stream == "compute")
                 if p.recompute_attention:
                     keep -= sum(
-                        op.output_bytes for op in fwd_ops
+                        op.output_bytes
+                        for op in fwd_ops
                         if op.stream == "compute" and "attention" in op.name
                     )
             total_bytes += keep
@@ -292,7 +325,9 @@ class LLMPerformanceModel:
         all_layers = self.model.get_layers()
         stage_layers = _split_stages(all_layers, gen_parallel.pp)[0]
         kv_total = 0
-        gen_batch_per_device = max(1, -(-rl_cfg.gen_batch_size // gen_parallel.dp))  # ceil division
+        gen_batch_per_device = max(
+            1, -(-rl_cfg.gen_batch_size // gen_parallel.dp)
+        )  # ceil division
         max_kv_seq = rl_cfg.avg_prompt_len + rl_cfg.max_response_len
         for layer in stage_layers:
             if layer.attention == "MLA":
@@ -301,11 +336,20 @@ class LLMPerformanceModel:
                 ) * self.model.dtype_bytes
             elif layer.attention == "DSA":
                 # SWA KV cache (all DSA layers have SWA, bounded by window_size)
-                swa_kv_heads_per_device = layer.num_kv_heads  # MQA: replicated, not TP-split
+                swa_kv_heads_per_device = (
+                    layer.num_kv_heads
+                )  # MQA: replicated, not TP-split
                 swa_kv_per_token = (
-                    2 * swa_kv_heads_per_device * layer.head_dim * self.model.dtype_bytes
+                    2
+                    * swa_kv_heads_per_device
+                    * layer.head_dim
+                    * self.model.dtype_bytes
                 )
-                kv_total += swa_kv_per_token * gen_batch_per_device * min(max_kv_seq, layer.window_size)
+                kv_total += (
+                    swa_kv_per_token
+                    * gen_batch_per_device
+                    * min(max_kv_seq, layer.window_size)
+                )
                 # Decoupled RoPE key (MLA-style): uncompressed, kept for the full
                 # context length, single shared head.
                 if layer.rope_dim > 0:
@@ -357,7 +401,9 @@ class LLMPerformanceModel:
 
         # Prefill / decode split for visualization (slowest-stage prefill time;
         # see inference.prefill_decode_times()).
-        t_prefill, _, _ = prefill_decode_times(self.model, self.hw, gen_parallel, rl_cfg)
+        t_prefill, _, _ = prefill_decode_times(
+            self.model, self.hw, gen_parallel, rl_cfg
+        )
         t_decode = max(t_gen - t_prefill, 0.0)
         eff_len = effective_response_len(
             avg=rl_cfg.avg_response_len,
@@ -371,7 +417,9 @@ class LLMPerformanceModel:
         total_gen_gb = gen_weight_gb + kv_cache_gb
         usable = self.hw.usable_hbm_gb
 
-        gen_tps = rl_cfg.gen_batch_size * rl_cfg.avg_response_len / t_gen if t_gen > 0 else 0
+        gen_tps = (
+            rl_cfg.gen_batch_size * rl_cfg.avg_response_len / t_gen if t_gen > 0 else 0
+        )
         gen_sps = rl_cfg.gen_batch_size / t_gen if t_gen > 0 else 0
         # Decode token latency (per output token, across the batch).
         decode_ms_per_token = (t_decode / eff_len * 1000) if eff_len > 0 else 0
@@ -391,7 +439,9 @@ class LLMPerformanceModel:
             "gen_feasible": total_gen_gb < usable,
         }
 
-    def derive_pretraining(self, total_devices, rl_cfg, train_parallel, precision_cfg=None):
+    def derive_pretraining(
+        self, total_devices, rl_cfg, train_parallel, precision_cfg=None
+    ):
         """Pretraining-only modeling: one fwd+bwd+optimizer step, no RL.
 
         Returns a dict with step time, throughput, the training-step
@@ -448,7 +498,14 @@ class LLMPerformanceModel:
         }
 
     def _compute_memory_profile(
-        self, train_sim, gen_sim, ref_sim, train_parallel, gen_parallel, ref_parallel, rl_cfg
+        self,
+        train_sim,
+        gen_sim,
+        ref_sim,
+        train_parallel,
+        gen_parallel,
+        ref_parallel,
+        rl_cfg,
     ):
         """Compute per-device memory breakdown for training, generation, and reference.
 
@@ -486,14 +543,8 @@ class LLMPerformanceModel:
         # Reference model
         ref_weight_gb = ref_sim.weight_bytes / 1e9 if ref_sim else 0
         ref_offload = rl_cfg.ref_offload_cpu or ref_parallel.param_offload
-        ref_gb = (
-            ref_weight_gb
-            if (rl_cfg.reference_model and not ref_offload)
-            else 0
-        )
-        ref_activation_peak_gb = (
-            ref_sim.peak_activation_bytes / 1e9 if ref_sim else 0
-        )
+        ref_gb = ref_weight_gb if (rl_cfg.reference_model and not ref_offload) else 0
+        ref_activation_peak_gb = ref_sim.peak_activation_bytes / 1e9 if ref_sim else 0
 
         # Reward model (same architecture as policy, forward-only, no optimizer).
         # Uses the full per-device weight (not ZeRO-sharded).
@@ -580,7 +631,13 @@ class LLMPerformanceModel:
         )
 
     def sensitivity(
-        self, rl_cfg, param_name, values, total_devices, gen_parallel, train_parallel,
+        self,
+        rl_cfg,
+        param_name,
+        values,
+        total_devices,
+        gen_parallel,
+        train_parallel,
         ref_parallel=None,
     ):
         """Sweep a single WorkloadConfig parameter across multiple values.
@@ -608,7 +665,9 @@ class LLMPerformanceModel:
         for v in values:
             cfg = rl_cfg.model_copy(update={param_name: v})
             results.append(
-                self.derive_targets(total_devices, cfg, gen_parallel, train_parallel, ref_parallel)
+                self.derive_targets(
+                    total_devices, cfg, gen_parallel, train_parallel, ref_parallel
+                )
             )
         return results
 
@@ -679,21 +738,21 @@ def compare_precision(
 
         speedup = t_baseline / t_step if t_step > 0 else 1.0
         comm_reduction_pct = (
-            (1.0 - comm_bytes / comm_baseline) * 100.0
-            if comm_baseline > 0
-            else 0.0
+            (1.0 - comm_bytes / comm_baseline) * 100.0 if comm_baseline > 0 else 0.0
         )
 
-        rows.append({
-            "name": name,
-            "step_seconds": t_step,
-            "speedup_vs_bf16": speedup,
-            "comm_bytes": comm_bytes,
-            "comm_reduction_pct": comm_reduction_pct,
-            "exposed_comm_by_fabric": dict(train_sim.exposed_comm_by_fabric),
-            "peak_memory_gb": peak_memory_gb,
-            "feasible": peak_memory_gb <= hw.usable_hbm_gb,
-        })
+        rows.append(
+            {
+                "name": name,
+                "step_seconds": t_step,
+                "speedup_vs_bf16": speedup,
+                "comm_bytes": comm_bytes,
+                "comm_reduction_pct": comm_reduction_pct,
+                "exposed_comm_by_fabric": dict(train_sim.exposed_comm_by_fabric),
+                "peak_memory_gb": peak_memory_gb,
+                "feasible": peak_memory_gb <= hw.usable_hbm_gb,
+            }
+        )
 
     return rows
 
@@ -715,20 +774,18 @@ def sweep_sparse_ratio(
     Returns one dict per point with: point, step_seconds, exposed_comm_by_fabric,
     cross_node_gb, peak_memory_gb, feasible.
     """
-    perf_model = LLMPerformanceModel(model_cfg, hw)
     rows = []
     for point in grid:
         # Apply parallel-config overrides (ep, node_limit, imbalance).
         par_overrides = {
-            k: point[k] for k in ("ep", "moe_node_limit", "moe_imbalance_factor")
+            k: point[k]
+            for k in ("ep", "moe_node_limit", "moe_imbalance_factor")
             if k in point
         }
         par = base_parallel_cfg.model_copy(update=par_overrides)
 
         # Apply per-layer MoE overrides (num_experts, top_k) to a model copy.
-        layer_overrides = {
-            k: point[k] for k in ("num_experts", "top_k") if k in point
-        }
+        layer_overrides = {k: point[k] for k in ("num_experts", "top_k") if k in point}
         if layer_overrides:
             new_layers = [
                 lc.model_copy(update=layer_overrides) for lc in model_cfg.layers
@@ -736,6 +793,10 @@ def sweep_sparse_ratio(
             mc = model_cfg.model_copy(update={"layers": new_layers})
         else:
             mc = model_cfg
+
+        # Build perf_model from the per-point model copy so activation-memory
+        # accounting reads the correct layer config (e.g. num_experts/top_k).
+        perf_model = LLMPerformanceModel(mc, hw)
 
         t_step, train_sim, _bd = pretraining_time(mc, hw, par, rl_cfg)
         weight_gb, grad_gb, optimizer_gb = perf_model._train_state_gb(train_sim, par)
@@ -745,12 +806,14 @@ def sweep_sparse_ratio(
         exposed = dict(train_sim.exposed_comm_by_fabric)
         cross_node_gb = train_sim.exposed_comm_by_fabric.get("nic", 0.0)
 
-        rows.append({
-            "point": point,
-            "step_seconds": t_step,
-            "exposed_comm_by_fabric": exposed,
-            "cross_node_gb": cross_node_gb,
-            "peak_memory_gb": peak_memory_gb,
-            "feasible": peak_memory_gb <= hw.usable_hbm_gb,
-        })
+        rows.append(
+            {
+                "point": point,
+                "step_seconds": t_step,
+                "exposed_comm_by_fabric": exposed,
+                "cross_node_gb": cross_node_gb,
+                "peak_memory_gb": peak_memory_gb,
+                "feasible": peak_memory_gb <= hw.usable_hbm_gb,
+            }
+        )
     return rows
