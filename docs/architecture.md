@@ -186,8 +186,13 @@ measurement and fitting workflow.
 - **Reward model not modeled.** RL reward computation is outside the cost model.
 - **Optimizer step is a placeholder.** Duration is `param_count * 1e-10`,
   not a roofline-based estimate.
-- **EP dispatch is coarse.** MoE AllToAll cost assumes uniform expert routing;
-  load imbalance is not modeled.
+- **EP dispatch:** MoE AllToAll supports node-limited hierarchical routing
+  (`ParallelismConfig.moe_node_limit`), splitting dispatch/combine into an
+  inter-node (NIC) and intra-node (NVLink/HCCS) component, and a scalar
+  `moe_imbalance_factor` that scales the hottest EP rank's traffic and expert
+  compute. See `sweep_sparse_ratio()` for the network-demand sweep. Probability-
+  distribution (p99) imbalance and fine-grained expert GEMM-efficiency decay
+  remain unmodeled.
 - **Activation checkpointing is a flat penalty.** Full recomputation adds 30%
   and attention recomputation adds 5%, rather than re-simulating the DAG with
   checkpointed ops.
