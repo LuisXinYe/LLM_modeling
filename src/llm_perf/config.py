@@ -244,6 +244,9 @@ class ParallelismConfig(BaseModel):
         param_offload: Offload model parameters to CPU when not computing.
         grad_offload: Offload gradients to CPU.
         activation_offload: Offload activations to CPU during forward pass.
+        moe_node_limit: Max distinct nodes a token's experts may span (node-limited
+            routing). 0 = unlimited (flat all-to-all).
+        moe_imbalance_factor: Hottest EP rank traffic/compute vs mean (>= 1.0).
     """
 
     tp: int = 1
@@ -262,12 +265,33 @@ class ParallelismConfig(BaseModel):
     param_offload: bool = False
     grad_offload: bool = False
     activation_offload: bool = False
+    # Large-sparse-ratio MoE routing knobs.
+    # moe_node_limit: max distinct nodes a token's experts may span (DeepSeek-V3
+    #   node-limited routing). 0 = unlimited → flat all-to-all (current behavior).
+    # moe_imbalance_factor: hottest EP rank traffic/compute relative to the mean
+    #   (>= 1.0). 1.0 = perfectly balanced (current behavior).
+    moe_node_limit: int = 0
+    moe_imbalance_factor: float = 1.0
 
     @field_validator("tp", "pp", "dp", "ep", "cp")
     @classmethod
     def must_be_positive(cls, v, info):
         if v < 1:
             raise ValueError(f"{info.field_name} must be >= 1, got {v}")
+        return v
+
+    @field_validator("moe_node_limit")
+    @classmethod
+    def node_limit_non_negative(cls, v):
+        if v < 0:
+            raise ValueError(f"moe_node_limit must be >= 0, got {v}")
+        return v
+
+    @field_validator("moe_imbalance_factor")
+    @classmethod
+    def imbalance_at_least_one(cls, v):
+        if v < 1.0:
+            raise ValueError(f"moe_imbalance_factor must be >= 1.0, got {v}")
         return v
 
     @property

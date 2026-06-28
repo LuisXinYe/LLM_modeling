@@ -238,3 +238,26 @@ def test_parallelism_config_ep_positive():
 def test_parallelism_config_valid():
     cfg = ParallelismConfig(tp=4, pp=2, dp=4, ep=1)
     assert cfg.tp == 4
+
+
+def test_moe_sparse_knobs_default_and_validate():
+    from llm_perf.config import ParallelismConfig
+    import pytest
+
+    # Defaults reproduce current behavior
+    p = ParallelismConfig(ep=8)
+    assert p.moe_node_limit == 0
+    assert p.moe_imbalance_factor == 1.0
+
+    # Accepts explicit values
+    p2 = ParallelismConfig(ep=64, moe_node_limit=4, moe_imbalance_factor=1.3)
+    assert p2.moe_node_limit == 4
+    assert p2.moe_imbalance_factor == 1.3
+
+    # node_limit must be >= 0
+    with pytest.raises(ValueError):
+        ParallelismConfig(moe_node_limit=-1)
+
+    # imbalance_factor must be >= 1.0
+    with pytest.raises(ValueError):
+        ParallelismConfig(moe_imbalance_factor=0.9)
