@@ -7,6 +7,7 @@ weight_bytes, and output_bytes.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -111,6 +112,11 @@ def _is_intra_node(group_size: int, hw: HardwareConfig) -> bool:
 def _fabric(group_size: int, hw: HardwareConfig) -> str:
     """Physical fabric a collective traverses: intra-node NVLink/HCCS vs inter-node NIC."""
     return "nvlink" if _is_intra_node(group_size, hw) else "nic"
+
+
+def _nodes_spanned(group_size: int, hw: HardwareConfig) -> int:
+    """Number of nodes an EP/collective group spans."""
+    return max(1, math.ceil(group_size / hw.devices_per_node))
 
 
 _COLLECTIVE_OPS = {
@@ -274,6 +280,9 @@ def build_layer_ops(
     ep = parallel_cfg.ep
     cp = parallel_cfg.cp
     sp = parallel_cfg.sp
+    moe_node_limit = parallel_cfg.moe_node_limit
+    moe_imbalance = parallel_cfg.moe_imbalance_factor
+    nodes_in_ep = _nodes_spanned(ep, hw)
     d = model_cfg.hidden_size
     dtype_bytes = model_cfg.dtype_bytes
     # CP shards the sequence across ranks; all per-rank ops use the local length
@@ -593,31 +602,49 @@ def build_layer_ops(
 
         # EP AllToAll dispatch: send tokens to target expert EP ranks
         if ep > 1:
-            a2a_dispatch_cost = ops.op_alltoall_dispatch(
-                tokens=batch_tokens,
-                hidden_size=d,
-                top_k=layer_cfg.top_k,
-                ep_size=ep,
-                dtype_bytes=dtype_bytes,
-            )
-            ep_dispatch = SimOp(
-                name="ep_alltoall_dispatch",
-                stream="ep_comm",
-                duration=ops.comm_time(
-                    a2a_dispatch_cost,
-                    hw,
-                    group_size=ep,
-                    is_intra_node=_is_intra_node(ep, hw),
-                    algorithm="alltoall",
-                ),
-                depends_on=[_idx(last_compute_local)],
-                weight_bytes=0,
-                output_bytes=0,
-                comm_bytes=a2a_dispatch_cost.comm_bytes,
-                fabric=_fabric(ep, hw),
-            )
-            result.append(ep_dispatch)
-            last_compute_local = len(result) - 1
+            if moe_node_limit > 0 and nodes_in_ep > 1:
+                inter_b, intra_b = ops.op_alltoall_dispatch_hierarchical(
+                    tokens=batch_tokens, hidden_size=d, top_k=layer_cfg.top_k,
+                    node_limit=moe_node_limit, nodes_in_ep=nodes_in_ep,
+                    imbalance_factor=moe_imbalance, dtype_bytes=dtype_bytes,
+                )
+                result.append(SimOp(
+                    name="ep_alltoall_dispatch_inter", stream="ep_comm",
+                    duration=ops.comm_time(
+                        ops.OpCost(comm_bytes=inter_b), hw, group_size=ep,
+                        is_intra_node=False, algorithm="alltoall"),
+                    depends_on=[_idx(last_compute_local)],
+                    weight_bytes=0, output_bytes=0, comm_bytes=inter_b,
+                    fabric="nic",
+                ))
+                result.append(SimOp(
+                    name="ep_alltoall_dispatch_intra", stream="ep_comm",
+                    duration=ops.comm_time(
+                        ops.OpCost(comm_bytes=intra_b), hw,
+                        group_size=hw.devices_per_node,
+                        is_intra_node=True, algorithm="alltoall"),
+                    depends_on=[_idx(last_compute_local)],
+                    weight_bytes=0, output_bytes=0, comm_bytes=intra_b,
+                    fabric="nvlink",
+                ))
+                last_compute_local = len(result) - 1
+            else:
+                a2a_dispatch_cost = ops.op_alltoall_dispatch(
+                    tokens=batch_tokens, hidden_size=d, top_k=layer_cfg.top_k,
+                    ep_size=ep, dtype_bytes=dtype_bytes,
+                )
+                # imbalance scales the synchronous collective's slowest participant
+                disp_bytes = a2a_dispatch_cost.comm_bytes * moe_imbalance
+                result.append(SimOp(
+                    name="ep_alltoall_dispatch", stream="ep_comm",
+                    duration=ops.comm_time(
+                        ops.OpCost(comm_bytes=disp_bytes), hw, group_size=ep,
+                        is_intra_node=_is_intra_node(ep, hw), algorithm="alltoall"),
+                    depends_on=[_idx(last_compute_local)],
+                    weight_bytes=0, output_bytes=0, comm_bytes=disp_bytes,
+                    fabric=_fabric(ep, hw),
+                ))
+                last_compute_local = len(result) - 1
 
         ffn_cost = ops.op_moe_ffn(
             hidden_size=d,
@@ -628,6 +655,7 @@ def build_layer_ops(
             top_k=layer_cfg.top_k,
             batch_tokens=batch_tokens,
             phase=phase,
+            imbalance_factor=moe_imbalance,
             dtype_bytes=dtype_bytes,
             weight_dtype_bytes=_prec_dtype_bytes(pc.weights.dtype),
             act_dtype_bytes=_prec_dtype_bytes(pc.activations.dtype),
@@ -660,31 +688,48 @@ def build_layer_ops(
 
         # EP AllToAll combine: gather expert outputs back to original EP ranks
         if ep > 1:
-            a2a_combine_cost = ops.op_alltoall_combine(
-                tokens=batch_tokens,
-                hidden_size=d,
-                top_k=layer_cfg.top_k,
-                ep_size=ep,
-                dtype_bytes=dtype_bytes,
-            )
-            ep_combine = SimOp(
-                name="ep_alltoall_combine",
-                stream="ep_comm",
-                duration=ops.comm_time(
-                    a2a_combine_cost,
-                    hw,
-                    group_size=ep,
-                    is_intra_node=_is_intra_node(ep, hw),
-                    algorithm="alltoall",
-                ),
-                depends_on=[_idx(last_compute_local)],
-                weight_bytes=0,
-                output_bytes=0,
-                comm_bytes=a2a_combine_cost.comm_bytes,
-                fabric=_fabric(ep, hw),
-            )
-            result.append(ep_combine)
-            last_compute_local = len(result) - 1
+            if moe_node_limit > 0 and nodes_in_ep > 1:
+                inter_b, intra_b = ops.op_alltoall_combine_hierarchical(
+                    tokens=batch_tokens, hidden_size=d, top_k=layer_cfg.top_k,
+                    node_limit=moe_node_limit, nodes_in_ep=nodes_in_ep,
+                    imbalance_factor=moe_imbalance, dtype_bytes=dtype_bytes,
+                )
+                result.append(SimOp(
+                    name="ep_alltoall_combine_inter", stream="ep_comm",
+                    duration=ops.comm_time(
+                        ops.OpCost(comm_bytes=inter_b), hw, group_size=ep,
+                        is_intra_node=False, algorithm="alltoall"),
+                    depends_on=[_idx(last_compute_local)],
+                    weight_bytes=0, output_bytes=0, comm_bytes=inter_b,
+                    fabric="nic",
+                ))
+                result.append(SimOp(
+                    name="ep_alltoall_combine_intra", stream="ep_comm",
+                    duration=ops.comm_time(
+                        ops.OpCost(comm_bytes=intra_b), hw,
+                        group_size=hw.devices_per_node,
+                        is_intra_node=True, algorithm="alltoall"),
+                    depends_on=[_idx(last_compute_local)],
+                    weight_bytes=0, output_bytes=0, comm_bytes=intra_b,
+                    fabric="nvlink",
+                ))
+                last_compute_local = len(result) - 1
+            else:
+                a2a_combine_cost = ops.op_alltoall_combine(
+                    tokens=batch_tokens, hidden_size=d, top_k=layer_cfg.top_k,
+                    ep_size=ep, dtype_bytes=dtype_bytes,
+                )
+                comb_bytes = a2a_combine_cost.comm_bytes * moe_imbalance
+                result.append(SimOp(
+                    name="ep_alltoall_combine", stream="ep_comm",
+                    duration=ops.comm_time(
+                        ops.OpCost(comm_bytes=comb_bytes), hw, group_size=ep,
+                        is_intra_node=_is_intra_node(ep, hw), algorithm="alltoall"),
+                    depends_on=[_idx(last_compute_local)],
+                    weight_bytes=0, output_bytes=0, comm_bytes=comb_bytes,
+                    fabric=_fabric(ep, hw),
+                ))
+                last_compute_local = len(result) - 1
     else:
         raise ValueError(f"Unknown FFN type: {ffn_type}")
 

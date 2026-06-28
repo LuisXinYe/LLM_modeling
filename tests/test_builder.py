@@ -622,3 +622,62 @@ def test_error_feedback_adds_buffer_and_compensation_op():
         o.name.startswith("compensation_add")
         for o in build_training_step(model, hw, pc, rl, precision_cfg=with_ef)
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 3: MoE node-limited fabric-split all-to-all
+# ---------------------------------------------------------------------------
+
+
+def _moe_layer_cfg():
+    from llm_perf.config import LayerConfig
+    return LayerConfig(
+        attention="GQA", num_heads=64, num_kv_heads=8, head_dim=128,
+        ffn="MoE", num_experts=256, num_shared_experts=1, top_k=8,
+        expert_intermediate_size=2048, shared_intermediate_size=2048,
+        intermediate_size=2048,
+    )
+
+
+def test_moe_node_limited_emits_two_fabric_dispatch_ops():
+    from llm_perf import builder
+    from llm_perf.builder import Phase
+    from llm_perf.config import ModelConfig, HardwareConfig, ParallelismConfig
+
+    layer = _moe_layer_cfg()
+    model = ModelConfig(name="t", hidden_size=4096, vocab_size=129280,
+                        num_layers=1, dtype="bf16", layers=[layer])
+    hw = HardwareConfig(name="hw", peak_tflops_bf16=400, hbm_capacity_gb=64,
+                        hbm_bandwidth_tb_s=3.0, devices_per_node=8)
+    # ep=32 spans 4 nodes; node_limit=2 activates the split
+    par = ParallelismConfig(ep=32, moe_node_limit=2)
+
+    ops = builder.build_layer_ops(layer, model, par, hw, batch=1, seq_len=4096,
+                                  phase=Phase.TRAIN_FWD)
+    names = [o.name for o in ops]
+    assert "ep_alltoall_dispatch_inter" in names
+    assert "ep_alltoall_dispatch_intra" in names
+    inter = next(o for o in ops if o.name == "ep_alltoall_dispatch_inter")
+    intra = next(o for o in ops if o.name == "ep_alltoall_dispatch_intra")
+    assert inter.fabric == "nic"
+    assert intra.fabric == "nvlink"
+    assert inter.stream == "ep_comm" and intra.stream == "ep_comm"
+
+
+def test_moe_node_limit_zero_keeps_single_dispatch_op():
+    from llm_perf import builder
+    from llm_perf.builder import Phase
+    from llm_perf.config import ModelConfig, HardwareConfig, ParallelismConfig
+
+    layer = _moe_layer_cfg()
+    model = ModelConfig(name="t", hidden_size=4096, vocab_size=129280,
+                        num_layers=1, dtype="bf16", layers=[layer])
+    hw = HardwareConfig(name="hw", peak_tflops_bf16=400, hbm_capacity_gb=64,
+                        hbm_bandwidth_tb_s=3.0, devices_per_node=8)
+    par = ParallelismConfig(ep=32)  # node_limit=0 default
+
+    ops = builder.build_layer_ops(layer, model, par, hw, batch=1, seq_len=4096,
+                                  phase=Phase.TRAIN_FWD)
+    names = [o.name for o in ops]
+    assert "ep_alltoall_dispatch" in names
+    assert "ep_alltoall_dispatch_inter" not in names
