@@ -665,3 +665,67 @@ def test_attention_split_equal_precision_sums_to_monolithic_duration():
     mono = sum(o.duration for o in ops_mono if o.name.startswith("attention_"))
     split = sum(o.duration for o in ops_split if o.name in ("attention_proj", "attention_core"))
     assert split == pytest.approx(mono, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Test: direction-aware FFN precision (Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_ffn_backward_uses_bwd_precision():
+    # fp4 forward, fp8 backward (the paper): the TRAIN_BWD ffn GEMM runs at fp8,
+    # the TRAIN_FWD ffn GEMM at fp4.
+    from llm_perf.precision import PrecisionConfig, ModuleLinearPrecision, TensorPrecision
+    model = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+    pc_par = ParallelismConfig(tp=1, dp=1)
+    rl = WorkloadConfig(total_prompts=8, group_size=2, train_micro_batch_size=1)
+    pc = PrecisionConfig(ffn_linear=ModuleLinearPrecision(
+        fwd=TensorPrecision(dtype="fp4_e2m1"), bwd=TensorPrecision(dtype="fp8_e4m3")))
+    ops = build_training_step(model, hw, pc_par, rl, precision_cfg=pc)
+    ffn = [o for o in ops if o.name == "ffn_swiglu"]
+    classes = {o.op_class for o in ffn}
+    assert "fp4" in classes  # forward
+    assert "fp8" in classes  # backward
+
+
+# ---------------------------------------------------------------------------
+# Test: asymmetric weights/activations — FFN weight bytes follow weights role
+# (regression guard for the ffn_linear=None per-role fallback fix)
+# ---------------------------------------------------------------------------
+
+
+def test_ffn_weight_bytes_follow_weights_role_not_activations():
+    """When ffn_linear is None and weights != activations dtype, forward ffn_swiglu
+    weight_bytes must be sized by pc.weights (fp8=1B/elem), NOT pc.activations (bf16=2B/elem).
+
+    Concretely: asymmetric config (fp8 weights, bf16 activations) must produce
+    HALF the ffn_swiglu weight_bytes of a pure-bf16 config, because fp8=1B vs bf16=2B.
+    """
+    model = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+    pc_par = ParallelismConfig(tp=1, dp=1)
+    rl = WorkloadConfig(total_prompts=8, group_size=2, train_micro_batch_size=1)
+
+    # Asymmetric: fp8 weights, bf16 activations, ffn_linear=None (unset)
+    asymmetric_pc = PrecisionConfig(
+        weights=TensorPrecision(dtype="fp8_e4m3"),
+        activations=TensorPrecision(dtype="bf16"),
+    )
+    # Pure bf16: both weights and activations at bf16
+    bf16_pc = PrecisionConfig.bf16_default()
+
+    ops_asym = build_training_step(model, hw, pc_par, rl, precision_cfg=asymmetric_pc)
+    ops_bf16 = build_training_step(model, hw, pc_par, rl, precision_cfg=bf16_pc)
+
+    # Collect forward ffn_swiglu weight_bytes (backward sets weight_bytes=0 by design)
+    # Forward ops appear before backward ops in the training step sequence; since
+    # weight_bytes is zeroed for BWD ops, summing is equivalent to summing FWD only.
+    asym_w = sum(o.weight_bytes for o in ops_asym if o.name == "ffn_swiglu")
+    bf16_w = sum(o.weight_bytes for o in ops_bf16 if o.name == "ffn_swiglu")
+
+    assert bf16_w > 0, "baseline bf16 ffn_swiglu weight_bytes must be > 0"
+    assert asym_w == pytest.approx(bf16_w / 2, rel=1e-6), (
+        f"fp8 weights should be half of bf16 weight bytes; "
+        f"got asym={asym_w}, bf16={bf16_w}"
+    )

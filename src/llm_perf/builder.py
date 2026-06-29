@@ -606,26 +606,33 @@ def build_layer_ops(
 
     if ffn_type == "SwiGLU":
         tp_intermediate = layer_cfg.intermediate_size // tp
+        ffn_prec = pc.linear_bwd("ffn") if phase == Phase.TRAIN_BWD else pc.linear_fwd("ffn")
+        ffn_cc = _compute_class(ffn_prec.dtype)
+        if pc.ffn_linear is not None:
+            ffn_w_bytes = ffn_a_bytes = _prec_dtype_bytes(ffn_prec.dtype)
+        else:
+            ffn_w_bytes = _prec_dtype_bytes(pc.weights.dtype)
+            ffn_a_bytes = _prec_dtype_bytes(pc.activations.dtype)
         ffn_cost = ops.op_swiglu_ffn(
             hidden_size=d,
             intermediate_size=tp_intermediate,
             batch_tokens=batch_tokens,
             phase=phase,
             dtype_bytes=dtype_bytes,
-            weight_dtype_bytes=_prec_dtype_bytes(pc.weights.dtype),
-            act_dtype_bytes=_prec_dtype_bytes(pc.activations.dtype),
+            weight_dtype_bytes=ffn_w_bytes,
+            act_dtype_bytes=ffn_a_bytes,
         )
         ffn_op = SimOp(
             name="ffn_swiglu",
             stream="compute",
             duration=ops.roofline_time(
                 ffn_cost, hw, is_large_gemm=True,
-                compute_class=_compute_class(pc.activations.dtype),
+                compute_class=ffn_cc,
             ),
             depends_on=[],  # set by _inject_quant_chain
             weight_bytes=ffn_cost.weight_bytes,
             output_bytes=ffn_cost.output_bytes,
-            op_class=_compute_class(pc.activations.dtype),
+            op_class=ffn_cc,
         )
         tail_idx = _inject_quant_chain(
             result=result,
@@ -672,6 +679,13 @@ def build_layer_ops(
             result.append(ep_dispatch)
             last_compute_local = len(result) - 1
 
+        ffn_prec = pc.linear_bwd("ffn") if phase == Phase.TRAIN_BWD else pc.linear_fwd("ffn")
+        ffn_cc = _compute_class(ffn_prec.dtype)
+        if pc.ffn_linear is not None:
+            ffn_w_bytes = ffn_a_bytes = _prec_dtype_bytes(ffn_prec.dtype)
+        else:
+            ffn_w_bytes = _prec_dtype_bytes(pc.weights.dtype)
+            ffn_a_bytes = _prec_dtype_bytes(pc.activations.dtype)
         ffn_cost = ops.op_moe_ffn(
             hidden_size=d,
             expert_intermediate_size=layer_cfg.expert_intermediate_size,
@@ -682,20 +696,20 @@ def build_layer_ops(
             batch_tokens=batch_tokens,
             phase=phase,
             dtype_bytes=dtype_bytes,
-            weight_dtype_bytes=_prec_dtype_bytes(pc.weights.dtype),
-            act_dtype_bytes=_prec_dtype_bytes(pc.activations.dtype),
+            weight_dtype_bytes=ffn_w_bytes,
+            act_dtype_bytes=ffn_a_bytes,
         )
         ffn_op = SimOp(
             name="ffn_moe",
             stream="compute",
             duration=ops.roofline_time(
                 ffn_cost, hw, is_large_gemm=True,
-                compute_class=_compute_class(pc.activations.dtype),
+                compute_class=ffn_cc,
             ),
             depends_on=[],  # set by _inject_quant_chain
             weight_bytes=ffn_cost.weight_bytes,
             output_bytes=ffn_cost.output_bytes,
-            op_class=_compute_class(pc.activations.dtype),
+            op_class=ffn_cc,
         )
         tail_idx = _inject_quant_chain(
             result=result,
