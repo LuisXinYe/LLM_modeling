@@ -1,7 +1,7 @@
 import pytest
 from llm_perf.precision import (
     dtype_bytes, compute_class, scale_overhead_bytes,
-    TensorPrecision, PrecisionConfig,
+    TensorPrecision, PrecisionConfig, ModuleLinearPrecision,
 )
 
 
@@ -53,3 +53,39 @@ def test_tensor_precision_fields():
     tp = TensorPrecision(dtype="fp4_e2m1", block_size=128, hadamard=True, hadamard_block=128)
     assert tp.block_size == 128
     assert tp.hadamard is True
+
+
+def test_module_linear_precision_defaults():
+    m = ModuleLinearPrecision()
+    assert m.fwd.dtype == "bf16" and m.bwd.dtype == "bf16"
+
+
+def test_resolver_falls_back_to_global_roles_when_unset():
+    pc = PrecisionConfig(
+        activations=TensorPrecision(dtype="fp8_e4m3"),
+        gradients=TensorPrecision(dtype="fp16"),
+    )
+    # attn_linear/ffn_linear unset → fall back to global activations/gradients
+    assert pc.linear_fwd("attn").dtype == "fp8_e4m3"
+    assert pc.linear_bwd("ffn").dtype == "fp16"
+
+
+def test_resolver_uses_module_precision_when_set():
+    pc = PrecisionConfig(
+        ffn_linear=ModuleLinearPrecision(
+            fwd=TensorPrecision(dtype="fp4_e2m1"), bwd=TensorPrecision(dtype="fp8_e4m3")
+        )
+    )
+    assert pc.linear_fwd("ffn").dtype == "fp4_e2m1"
+    assert pc.linear_bwd("ffn").dtype == "fp8_e4m3"
+    # attn still falls back (unset) to global activations default bf16
+    assert pc.linear_fwd("attn").dtype == "bf16"
+
+
+def test_fp4_paper_recipe():
+    pc = PrecisionConfig.fp4_paper()
+    assert pc.linear_fwd("attn").dtype == "fp8_e4m3"   # attention protected
+    assert pc.linear_fwd("ffn").dtype == "fp4_e2m1"    # FFN forward FP4
+    assert pc.linear_bwd("attn").dtype == "fp8_e4m3"   # backward FP8
+    assert pc.linear_bwd("ffn").dtype == "fp8_e4m3"
+    assert pc.master_dtype == "fp32"

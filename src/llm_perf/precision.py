@@ -7,6 +7,8 @@ docs/superpowers/specs/2026-06-27-low-precision-training-modeling-design.md.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 # Single source of truth for element sizes. fp4 stores two values per byte.
@@ -67,11 +69,22 @@ class TensorPrecision(BaseModel):
     scale_bytes: int = 4         # bytes per scale (4=fp32, 1=e8m0 for mxfp4)
 
 
+class ModuleLinearPrecision(BaseModel):
+    """Precision for one linear module's forward vs backward GEMMs.
+
+    Ref: Zhou et al. 2025 (arXiv:2502.11458) — forward FP4 / backward FP8 asymmetry.
+    """
+    fwd: TensorPrecision = TensorPrecision()
+    bwd: TensorPrecision = TensorPrecision()
+
+
 class PrecisionConfig(BaseModel):
     weights: TensorPrecision = TensorPrecision()
     activations: TensorPrecision = TensorPrecision()
     gradients: TensorPrecision = TensorPrecision()
     comm: TensorPrecision = TensorPrecision()
+    attn_linear: Optional[ModuleLinearPrecision] = None  # QKV + O projections
+    ffn_linear: Optional[ModuleLinearPrecision] = None   # FFN gate/up/down
     master_dtype: str = "fp32"
     error_feedback: bool = False
     ef_dtype: str = "fp16"
@@ -100,4 +113,24 @@ class PrecisionConfig(BaseModel):
             activations=TensorPrecision(dtype=dtype),
             gradients=TensorPrecision(dtype=dtype),
             comm=TensorPrecision(dtype=dtype),
+        )
+
+    def linear_fwd(self, module: str) -> TensorPrecision:
+        """Forward-GEMM precision for module 'attn'|'ffn'; falls back to global activations."""
+        mp = self.attn_linear if module == "attn" else self.ffn_linear
+        return mp.fwd if mp is not None else self.activations
+
+    def linear_bwd(self, module: str) -> TensorPrecision:
+        """Backward-GEMM precision for module 'attn'|'ffn'; falls back to global gradients."""
+        mp = self.attn_linear if module == "attn" else self.ffn_linear
+        return mp.bwd if mp is not None else self.gradients
+
+    @classmethod
+    def fp4_paper(cls) -> "PrecisionConfig":
+        """Zhou et al. 2025 FP4 recipe: attn-proj FP8, FFN-fwd FP4, linear-bwd FP8."""
+        fp8 = TensorPrecision(dtype="fp8_e4m3", block_size=128)
+        fp4 = TensorPrecision(dtype="fp4_e2m1", block_size=128)
+        return cls(
+            attn_linear=ModuleLinearPrecision(fwd=fp8, bwd=fp8),
+            ffn_linear=ModuleLinearPrecision(fwd=fp4, bwd=fp8),
         )
