@@ -10,6 +10,7 @@ from llm_perf.ops import (
     comm_time,
     op_allreduce,
     op_alltoall,
+    op_attention_split,
     op_gqa_attention,
     op_linear,
     op_mla_attention,
@@ -656,3 +657,45 @@ def test_compensation_add_is_elementwise_memory():
     # read EF buffer + read grad + write EF buffer = 3 * numel * 2B
     assert cost.mem_rw == pytest.approx(3 * 2048 * 2)
     assert cost.weight_bytes == 0
+
+
+# ---------------------------------------------------------------------------
+# op_attention_split
+# ---------------------------------------------------------------------------
+
+
+def test_attention_split_flops_sum_to_monolithic():
+    from llm_perf.ops import op_attention_split
+
+    args = dict(
+        num_heads=32,
+        num_kv_heads=32,
+        head_dim=128,
+        hidden_size=4096,
+        batch=1,
+        seq_len=4096,
+        phase=Phase.TRAIN_FWD,
+    )
+    mono = op_gqa_attention(**args)
+    proj, core = op_attention_split(**args)
+    assert proj.flops + core.flops == pytest.approx(mono.flops, rel=1e-9)
+    # weights all live with the projection; core has none
+    assert proj.weight_bytes == pytest.approx(mono.weight_bytes)
+    assert core.weight_bytes == 0
+
+
+def test_attention_split_proj_precision_aware_weight_bytes():
+    from llm_perf.ops import op_attention_split
+
+    args = dict(
+        num_heads=32,
+        num_kv_heads=32,
+        head_dim=128,
+        hidden_size=4096,
+        batch=1,
+        seq_len=4096,
+        phase=Phase.TRAIN_FWD,
+    )
+    proj_bf16, _ = op_attention_split(**args, proj_weight_dtype_bytes=2)
+    proj_fp8, _ = op_attention_split(**args, proj_weight_dtype_bytes=1)
+    assert proj_fp8.weight_bytes == pytest.approx(proj_bf16.weight_bytes / 2)

@@ -1104,3 +1104,63 @@ def op_compensation_add(numel: float, dtype: str) -> OpCost:
     mem_rw = 3 * numel * b
     flops = numel
     return OpCost(flops=flops, mem_rw=mem_rw, weight_bytes=0, output_bytes=0)
+
+
+def op_attention_split(
+    num_heads: int,
+    num_kv_heads: int,
+    head_dim: int,
+    hidden_size: int,
+    batch: int,
+    seq_len: int,
+    phase: Phase,
+    kv_len: int | None = None,
+    dtype_bytes: int = 2,
+    proj_weight_dtype_bytes: float | None = None,
+    proj_act_dtype_bytes: float | None = None,
+) -> tuple["OpCost", "OpCost"]:
+    """Split GQA/MHA attention into (projection GEMM, core attention) costs.
+
+    Projection = QKV + O linears (quantizable; carries all weights + activation
+    traffic). Core = QK^T + softmax*V (kept FP16 per Zhou et al. 2025). FLOPs of
+    the two parts sum to op_gqa_attention's total. proj_weight/act_dtype_bytes
+    size the resident weight copy / saved activation for low precision (default
+    dtype_bytes). Ref: GQA paper; Zhou et al. arXiv:2502.11458.
+    """
+    H, G, d = num_heads, num_kv_heads, hidden_size
+    batch_tokens = batch * seq_len
+    d_qo = H * head_dim
+    d_kv = G * head_dim
+    L = (
+        (kv_len if kv_len is not None else seq_len)
+        if phase == Phase.DECODE
+        else seq_len
+    )
+    wb = dtype_bytes if proj_weight_dtype_bytes is None else proj_weight_dtype_bytes
+    ab = dtype_bytes if proj_act_dtype_bytes is None else proj_act_dtype_bytes
+
+    proj_flops = (2 * d * d_qo + 2 * d * d_kv + 2 * d * d_kv + 2 * d_qo * d) * batch_tokens
+    attn_flops = (
+        (4 * d_qo * L * batch)
+        if phase == Phase.DECODE
+        else (4 * d_qo * L * batch_tokens)
+    )
+    bwd = 2 if phase == Phase.TRAIN_BWD else 1
+
+    weight_b = (d * d_qo + d * d_kv + d * d_kv + d_qo * d) * wb
+    proj_mem = (
+        weight_b + batch_tokens * d * dtype_bytes + batch_tokens * d_qo * dtype_bytes
+    )
+    proj_out = batch_tokens * d * ab if phase == Phase.TRAIN_FWD else 0
+    proj = OpCost(
+        flops=bwd * proj_flops,
+        mem_rw=proj_mem,
+        weight_bytes=weight_b,
+        output_bytes=proj_out,
+    )
+
+    core_mem = 2 * batch_tokens * d_qo * dtype_bytes  # read scores / write context (approx)
+    if phase == Phase.DECODE:
+        core_mem += batch * L * 2 * d_kv * dtype_bytes
+    core = OpCost(flops=bwd * attn_flops, mem_rw=core_mem, weight_bytes=0, output_bytes=0)
+    return proj, core
