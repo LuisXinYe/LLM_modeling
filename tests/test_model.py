@@ -509,6 +509,22 @@ def test_error_feedback_does_not_inflate_optimizer_or_grad_memory(model_cfg, hw)
     assert (w1 - w0) * 1e9 == pytest.approx(sim_ef.ef_buffer_bytes, rel=1e-6)
 
 
+def test_fp4_paper_recipe_through_compare_precision():
+    from llm_perf.model import compare_precision
+    from llm_perf.precision import PrecisionConfig
+    model = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+    pc = ParallelismConfig(tp=1, dp=4)
+    rl = WorkloadConfig(total_prompts=8, group_size=2, train_micro_batch_size=1)
+    rows = compare_precision(model, hw, pc, rl, {
+        "bf16": PrecisionConfig.bf16_default(),
+        "fp4_paper": PrecisionConfig.fp4_paper(),
+    })
+    by = {r["name"]: r for r in rows}
+    assert by["fp4_paper"]["speedup_vs_bf16"] > 1.0
+    assert by["fp4_paper"]["speedup_vs_bf16"] <= 4.0
+
+
 def test_default_precision_follows_model_dtype(model_cfg, hw):
     """Final-review #3: with no PrecisionConfig, roles default to ModelConfig.dtype
     (not hardcoded bf16). A fp8 model's default DP grad comm uses fp8 bytes."""
