@@ -695,6 +695,41 @@ def test_ffn_backward_uses_bwd_precision():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Test: fp4_paper() emits quant overhead (FIX 1 regression guard)
+# ---------------------------------------------------------------------------
+
+
+def test_fp4_paper_emits_quant_overhead():
+    """fp4_paper() must charge quantize/dequant overhead for FFN (fp4) and
+    attn-proj (fp8) chains. Before the fix, pc.activations stayed bf16, so
+    _inject_quant_chain skipped the chain entirely — no overhead was charged.
+
+    Also guard the no-regression direction: bf16_default() must emit NONE of
+    these ops.
+    """
+    model = load_model_config(str(CONFIGS_DIR / "models" / "llama3_1_8b.yaml"))
+    hw = load_hardware_config(str(CONFIGS_DIR / "hardware" / "ascend_910c.yaml"))
+    pc_par = ParallelismConfig(tp=1, dp=1)
+    rl = WorkloadConfig(total_prompts=8, group_size=2, train_micro_batch_size=1)
+
+    ops_fp4 = build_training_step(model, hw, pc_par, rl, precision_cfg=PrecisionConfig.fp4_paper())
+    names_fp4 = [o.name for o in ops_fp4]
+
+    assert any(n.startswith("quantize") for n in names_fp4), (
+        "fp4_paper() must emit quantize_act ops; got none — overhead is not charged"
+    )
+    assert any(n.startswith("dequant") for n in names_fp4), (
+        "fp4_paper() must emit dequant_out ops; got none — overhead is not charged"
+    )
+
+    # bf16_default() must NOT emit any quant/dequant/hadamard ops (no-regression guard)
+    ops_bf16 = build_training_step(model, hw, pc_par, rl)
+    assert not any(o.name.startswith(("quantize", "hadamard", "dequant")) for o in ops_bf16), (
+        "bf16_default() must not emit quant overhead ops"
+    )
+
+
 def test_ffn_weight_bytes_follow_weights_role_not_activations():
     """When ffn_linear is None and weights != activations dtype, forward ffn_swiglu
     weight_bytes must be sized by pc.weights (fp8=1B/elem), NOT pc.activations (bf16=2B/elem).

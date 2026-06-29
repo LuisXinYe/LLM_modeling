@@ -21,6 +21,7 @@ from llm_perf.config import (
 )
 from llm_perf.precision import (
     PrecisionConfig,
+    TensorPrecision,
     compute_class as _compute_class,
     dtype_bytes as _prec_dtype_bytes,
 )
@@ -174,6 +175,7 @@ def _inject_quant_chain(
     index_offset: int,
     dep_idx: Optional[int],
     component_name: str = "",
+    op_prec: Optional[TensorPrecision] = None,
 ) -> int:
     """Prepend quantize(+hadamard) and append dequant around gemm_op.
 
@@ -183,8 +185,14 @@ def _inject_quant_chain(
 
     When component_name is in pc.high_precision_layers, the component uses the
     high-precision dtype path (bf16 branch) even if activations are low-precision.
+
+    op_prec: when provided, overrides pc.activations as the quantization dtype
+    source for this chain. Pass the resolved module-level TensorPrecision
+    (e.g. attn_prec or ffn_prec) so that quantize/hadamard/dequant ops use the
+    correct low-precision dtype rather than the global activations role.
+    When None, behavior is byte-identical to the prior code (uses pc.activations).
     """
-    act = pc.activations
+    act = op_prec if op_prec is not None else pc.activations
     # High-precision layer override: skip quant chain for this component
     if component_name and component_name in pc.high_precision_layers:
         gemm_op.depends_on = [dep_idx] if dep_idx is not None else []
@@ -475,6 +483,7 @@ def build_layer_ops(
             index_offset=index_offset,
             dep_idx=attn_dep_idx,
             component_name="attn",
+            op_prec=attn_prec,
         )
         core_op = SimOp(
             name="attention_core",
@@ -645,6 +654,7 @@ def build_layer_ops(
             index_offset=index_offset,
             dep_idx=_idx(last_compute_local),
             component_name="ffn",
+            op_prec=ffn_prec if pc.ffn_linear is not None else None,
         )
         last_compute_local = tail_idx - index_offset
 
@@ -722,6 +732,7 @@ def build_layer_ops(
             index_offset=index_offset,
             dep_idx=_idx(last_compute_local),
             component_name="ffn",
+            op_prec=ffn_prec if pc.ffn_linear is not None else None,
         )
         last_compute_local = tail_idx - index_offset
 

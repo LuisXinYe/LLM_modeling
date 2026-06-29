@@ -26,9 +26,11 @@ def _speed(dtype: str, speed_map: dict) -> float:
 
 def theoretical_compute_cost(
     model_cfg: ModelConfig, precision_cfg: PrecisionConfig,
-    speed_map: dict = SPEED_MAP_PAPER, seq_len: int = 4096,
+    speed_map: dict | None = None, seq_len: int = 4096,
 ) -> dict:
     """Matmul-only theoretical compute cost as % of all-FP16. See module docstring."""
+    if speed_map is None:
+        speed_map = SPEED_MAP_PAPER
     layer = model_cfg.get_layers()[0]
     d = model_cfg.hidden_size
     d_qo = layer.num_heads * layer.head_dim

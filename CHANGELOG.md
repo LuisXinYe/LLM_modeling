@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Fixed
+- When `ffn_linear` is unset, backward FFN `compute_class` now resolves from the
+  `gradients` role (was `activations`); benign when gradients == activations (all default paths)
 - `FEASIBLE` status now reflects both time budget AND memory feasibility
 - Builder rejects invalid TP/PP configurations instead of silently truncating
 - Simulator now models compute–communication overlap and per-fabric bandwidth
