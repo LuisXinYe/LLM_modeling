@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from llm_perf.config import (
+    CalibrationConfig,
+    HardwareConfig,
     ParallelismConfig,
     WorkloadConfig,
     load_hardware_config,
@@ -17,6 +19,7 @@ from llm_perf.dynamic_cp import (
     assign_bin_cp,
     assign_cp,
     compare_cp_strategies,
+    cp_group_init_cost,
     lognormal_buckets,
     pack_units,
     packing_efficiency,
@@ -46,6 +49,29 @@ def test_lognormal_buckets_degenerate_without_std():
     # no std → single fixed-length bucket (no variable-length distribution)
     assert lognormal_buckets(4096, None, 65536) == [(4096.0, 1.0)]
     assert lognormal_buckets(4096, 0, 65536) == [(4096.0, 1.0)]
+
+
+def _hw_with_cp_init(**cal_overrides):
+    cal = CalibrationConfig(**cal_overrides)
+    return HardwareConfig(name="x", peak_tflops_bf16=100, hbm_capacity_gb=80,
+                          hbm_bandwidth_tb_s=2.0, calibration=cal)
+
+
+def test_cp_group_init_cost_disabled_by_default():
+    # default calibration → cp_* coefficients are 0 → no init cost
+    hw0 = _hw_with_cp_init()
+    assert cp_group_init_cost([2, 4, 8], hw0) == (0.0, 0.0)
+
+
+def test_cp_group_init_cost_formula_and_dedup():
+    import math
+    hw0 = _hw_with_cp_init(cp_init_alpha_s=0.05, cp_init_beta_s=0.005,
+                           cp_init_gamma_s=0.002, cp_group_buffer_mb=30)
+    # g=1 has no comm group (dropped); duplicate 2 collapses → distinct {2, 8}
+    t, m = cp_group_init_cost([1, 2, 2, 8], hw0)
+    expect = sum(0.05 + 0.005 * g + 0.002 * g * math.log2(g) for g in (2, 8))
+    assert t == pytest.approx(expect)
+    assert m == pytest.approx(2 * 30 / 1000.0)  # two communicators
 
 
 def test_packing_efficiency_bounds_and_fill():
@@ -82,6 +108,24 @@ def test_compare_pipeline_speedup_variable_length(mc, hw):
     assert r["static"]["m"] >= 1 and r["dynamic"]["m"] >= 1
     # static forces max_cp on every unit
     assert all(u["cp"] == r["max_cp"] for u in r["static"]["units"])
+
+
+def test_compare_reports_cp_init_overhead(mc, hw):
+    # ascend_910c.yaml supplies non-zero cp_* calibration, so init cost is live.
+    par = ParallelismConfig(tp=2, cp=8, dp=1, pp=8)
+    wl = WorkloadConfig(group_size=1)
+    buckets = lognormal_buckets(4096, 8192, 65536, n_buckets=6)
+    r = compare_cp_strategies(mc, hw, par, wl, buckets, total_ranks=8, pp=8, v=1)
+    # static pre-builds only {max_cp}; dynamic the full {2,4,8} ladder
+    assert r["static"]["cp_groups"] == [8]
+    assert r["dynamic"]["cp_groups"] == [2, 4, 8]
+    # dynamic's extra init cost is real but non-negative (more, smaller groups)
+    assert r["cp_init_extra_s"] > 0
+    assert r["cp_init_extra_mem_gb"] > 0
+    # one-time init time must be tiny vs a single step (amortizes to ~0)
+    assert r["dynamic"]["cp_init_s"] < r["dynamic"]["step_s"]
+    # resident comm buffers are counted into peak memory
+    assert r["dynamic"]["cp_init_mem_gb"] == pytest.approx(3 * 30 / 1000.0)
 
 
 def test_compare_pipeline_uniform_no_gain(mc, hw):

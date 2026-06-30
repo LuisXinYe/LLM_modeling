@@ -81,6 +81,14 @@ def main():
     print("-" * 80)
     print(f"  Speedup (static/dynamic step): {r['speedup']:.2f}x   "
           f"TFLOPS/GPU ratio: {r['tflops_ratio']:.2f}x")
+    st, dy = r["static"], r["dynamic"]
+    print(f"  CP-group init (one-time, pre-built at init): "
+          f"static groups={st['cp_groups']} {st['cp_init_s']*1000:.0f}ms/"
+          f"{st['cp_init_mem_gb']*1000:.0f}MB  |  "
+          f"dynamic groups={dy['cp_groups']} {dy['cp_init_s']*1000:.0f}ms/"
+          f"{dy['cp_init_mem_gb']*1000:.0f}MB  |  "
+          f"dynamic extra: +{r['cp_init_extra_s']*1000:.0f}ms / "
+          f"+{r['cp_init_extra_mem_gb']*1000:.0f}MB (amortized over all steps)")
     print("  Note: the headline speedup is sensitive to --global-batch-seqs "
           "(observed to drift ~1.5-1.9x over a swept range) — treat the single "
           "number above as illustrative, not a guaranteed constant.")

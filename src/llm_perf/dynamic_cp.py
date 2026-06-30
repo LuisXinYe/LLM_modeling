@@ -95,6 +95,40 @@ def lognormal_buckets(
     return [(length, f / total) for length, f in buckets]
 
 
+def cp_group_init_cost(cp_degrees, hw) -> Tuple[float, float]:
+    """One-time cost of *building* the CP communication groups.
+
+    A context-parallel degree g>=2 needs its own ring communicator (g=1 has no
+    cross-rank communication, so no group). Building one is dominated by the
+    bootstrap rendezvous + per-peer connection setup + a global barrier — modeled
+    per group as
+
+        T_init(g) = alpha + beta·g + gamma·g·log2(g)
+                    └bootstrap └build  └rendezvous all-gather tail
+
+    plus a resident per-communicator HBM buffer ``cp_group_buffer_mb``. The totals
+    sum over the *distinct* degrees pre-built (g=1 dropped, duplicates collapsed).
+
+    This is a ONE-TIME cost paid at initialization (or lazily on first use), NOT a
+    per-step cost: the groups are pre-built once and then merely *selected* per
+    micro-batch at run time (a handle lookup, ~0 cost) — which is precisely why a
+    dynamic per-micro-batch CP switch is cheap and why we do not model runtime
+    group construction. All coefficients live in ``hw.calibration`` and default to
+    0, so the cost is disabled until a hardware config supplies them.
+
+    Returns ``(init_time_s, resident_mem_gb)``.
+    """
+    cal = hw.calibration
+    degrees = sorted({int(g) for g in cp_degrees if int(g) >= 2})
+    t = 0.0
+    for g in degrees:
+        t += (cal.cp_init_alpha_s
+              + cal.cp_init_beta_s * g
+              + cal.cp_init_gamma_s * g * math.log2(g))
+    mem_gb = len(degrees) * cal.cp_group_buffer_mb / 1000.0
+    return t, mem_gb
+
+
 def packing_efficiency(
     seq_buckets: List[Tuple[float, float]], token_budget: float
 ) -> float:
@@ -163,7 +197,7 @@ def _fwd_compute_cp1(model_cfg, hw, base_par, wl, seq_len: float) -> float:
 
 def _recipe(model_cfg, hw, parallel_cfg, rl_cfg, buckets, total_ranks, quota,
             token_budget, max_cp, p, v, bwd_factor, order, cp_of,
-            global_batch_seqs):
+            global_batch_seqs, cp_init_degrees):
     """Cost of one recipe (CP assignment given by ``cp_of``) through the
     variable-length 1F1B(+V) pipeline simulator.
 
@@ -210,7 +244,11 @@ def _recipe(model_cfg, hw, parallel_cfg, rl_cfg, buckets, total_ranks, quota,
     mfu = compute_eff * useful / denom if denom > 0 else 0.0
     weight_gb = (_sample_sim(model_cfg, hw, parallel_cfg, rl_cfg, units[0].seq_len,
                              units[0].cp).weight_bytes / 1e9) if units else 0.0
-    peak_mem_gb = res.peak_activation_bytes / 1e9 + weight_gb
+    # CP communication groups are built ONCE at init (not per step). The resident
+    # per-communicator buffers stay in HBM the whole run, so they count toward the
+    # peak (feasibility); the build *time* is reported separately and amortized.
+    cp_init_s, cp_init_mem_gb = cp_group_init_cost(cp_init_degrees, hw)
+    peak_mem_gb = res.peak_activation_bytes / 1e9 + weight_gb + cp_init_mem_gb
     busy = res.per_device_busy
     imbalance = (max(busy) / (sum(busy) / len(busy))) if busy and sum(busy) > 0 else 1.0
     return {
@@ -223,6 +261,9 @@ def _recipe(model_cfg, hw, parallel_cfg, rl_cfg, buckets, total_ranks, quota,
         "feasible": peak_mem_gb <= usable,
         "imbalance": imbalance,
         "rank_seconds_per_sample": rank_seconds / len(units) if units else 0.0,
+        "cp_init_s": cp_init_s,
+        "cp_init_mem_gb": cp_init_mem_gb,
+        "cp_groups": list(sorted({int(g) for g in cp_init_degrees if int(g) >= 2})),
         "units": [{"cp": u.cp, "seq_len": u.seq_len} for u in units],
     }
 
@@ -274,8 +315,10 @@ def compare_cp_strategies(
             unit count is ``ceil(bin_seqs / dp_b)`` where ``dp_b = R // cp_b``).
 
     Returns a dict with ``static`` and ``dynamic`` recipe breakdowns (see
-    ``_recipe``) plus the top-level ``speedup`` (static_step / dynamic_step)
-    and ``tflops_ratio``.
+    ``_recipe``) plus the top-level ``speedup`` (static_step / dynamic_step),
+    ``tflops_ratio``, and the one-time CP-group init overhead of dynamic over
+    static (``cp_init_extra_s``, ``cp_init_extra_mem_gb``). Each recipe also
+    carries its own ``cp_init_s`` / ``cp_init_mem_gb`` / ``cp_groups``.
     """
     max_cp = max(1, int(parallel_cfg.cp))
     max_len = max(length for length, _ in seq_buckets)
@@ -292,12 +335,19 @@ def compare_cp_strategies(
     def dynamic_cp_of(L):
         return assign_bin_cp(model_cfg, hw, parallel_cfg, rl_cfg, L, quota, max_cp, usable)
 
+    # Communicators pre-built at init. Static CP runs every sequence at max_cp, so
+    # it needs only that one CP group. Dynamic CP may route a sequence to any
+    # power-of-two degree, so it pre-builds the whole ladder {2,4,…,max_cp} once —
+    # the extra groups are the incremental init cost of dynamic over static.
+    static_groups = [max_cp] if max_cp >= 2 else []
+    dynamic_groups = [2 ** i for i in range(1, int(math.log2(max_cp)) + 1)] if max_cp >= 2 else []
+
     static = _recipe(model_cfg, hw, parallel_cfg, rl_cfg, seq_buckets, total_ranks,
                      quota, token_budget, max_cp, p, v, bwd_factor, order, static_cp_of,
-                     global_batch_seqs)
+                     global_batch_seqs, static_groups)
     dynamic = _recipe(model_cfg, hw, parallel_cfg, rl_cfg, seq_buckets, total_ranks,
                       quota, token_budget, max_cp, p, v, bwd_factor, order, dynamic_cp_of,
-                      global_batch_seqs)
+                      global_batch_seqs, dynamic_groups)
 
     speedup = static["step_s"] / dynamic["step_s"] if dynamic["step_s"] > 0 else 0.0
     tflops_ratio = (dynamic["tflops_per_gpu"] / static["tflops_per_gpu"]
@@ -307,6 +357,8 @@ def compare_cp_strategies(
         "total_ranks": total_ranks, "p": p, "v": v,
         "static": static, "dynamic": dynamic,
         "speedup": speedup, "tflops_ratio": tflops_ratio,
+        "cp_init_extra_s": dynamic["cp_init_s"] - static["cp_init_s"],
+        "cp_init_extra_mem_gb": dynamic["cp_init_mem_gb"] - static["cp_init_mem_gb"],
     }
 
 

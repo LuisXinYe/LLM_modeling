@@ -122,12 +122,25 @@ class CalibrationConfig(BaseModel):
         compute_eff_small_op: Compute efficiency for small/element-wise ops.
         memory_efficiency: HBM bandwidth utilization ratio.
         comm_efficiency: Inter-/intra-node communication bandwidth utilization.
+        cp_init_alpha_s: Fixed bootstrap time to build one CP communicator (s).
+        cp_init_beta_s: Per-rank connection-setup time when building a CP group
+            (s per rank in the group).
+        cp_init_gamma_s: Coefficient of the g·log2(g) rendezvous all-gather tail
+            when building a CP group of size g (s).
+        cp_group_buffer_mb: Resident HBM buffer held by one CP communicator (MB).
+
+    The four cp_* fields default to 0 (CP-group init cost disabled), so existing
+    calibrated numbers are unchanged until a hardware config supplies them.
     """
 
     compute_eff_large_gemm: float = 0.50
     compute_eff_small_op: float = 0.20
     memory_efficiency: float = 0.70
     comm_efficiency: float = 0.70
+    cp_init_alpha_s: float = 0.0
+    cp_init_beta_s: float = 0.0
+    cp_init_gamma_s: float = 0.0
+    cp_group_buffer_mb: float = 0.0
 
 
 class HardwareConfig(BaseModel):

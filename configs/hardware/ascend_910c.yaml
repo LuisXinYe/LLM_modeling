@@ -9,3 +9,10 @@ calibration:
   compute_eff_small_op: 0.20
   memory_efficiency: 0.70
   comm_efficiency: 0.70
+  # CP communication-group init cost: T_init(g) = alpha + beta*g + gamma*g*log2(g)
+  # per group, plus cp_group_buffer_mb resident HBM per communicator. Intra-node
+  # (HCCS) small-group illustrative values; one-time at init, not per-step.
+  cp_init_alpha_s: 0.05
+  cp_init_beta_s: 0.005
+  cp_init_gamma_s: 0.002
+  cp_group_buffer_mb: 30
